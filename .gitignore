@@ -23,3 +23,6 @@ logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Ignore redundant subfolder
+NewtCBT-Utils-v1.0/

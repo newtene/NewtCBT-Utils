@@ -70,7 +70,7 @@
     }
 
     function getVisibleTempIcon() {
-      const result = document.evaluate("
+      const result = document.evaluate("//gem-icon[@data-test-id='temp-chat-button']", document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
       for (let i = 0; i < result.snapshotLength; i++) {
         const node = result.snapshotItem(i);
         if (node.getBoundingClientRect().width > 0) {
