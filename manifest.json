@@ -41,7 +41,6 @@
   "content_scripts": [
     {
       "matches": [
-        "*://localhost/*",
         "*://*.buildtopia.fun/*"
       ],
       "js": ["content.js"],
