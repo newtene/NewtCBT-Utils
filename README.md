@@ -8,13 +8,10 @@ Follow these simple steps to install the extension manually:
 
 1. **Open Extensions Page**: Type `chrome://extensions/` into your Chrome address bar and hit Enter.
 2. **Enable Developer Mode**: Look at the top right corner of the extensions page and toggle the **Developer mode** switch so that it is turned ON. 
-   
-   ![Enable Developer Mode](dev_mode.png)
-
 3. **Load Unpacked**: A new menu bar will appear at the top left of the screen. Click on the **Load unpacked** button.
-   
-   ![Load Unpacked](load_unpacked.png)
+4. **Extract and Select**: First, extract the downloaded zip file. When the file browser window opens, simply select that extracted folder to load the extension.
 
-4. **Select the File**: When the file browser window opens, simply select the downloaded zip file directly to load the extension. 
+### Video Tutorial
+<video src="chrome.mp4" controls="controls" muted="muted" style="max-width:100%;"></video>
 
 You're all set! The companion extension is now active and ready to enhance your AI searches.
