@@ -1,0 +1,68 @@
+{
+  "manifest_version": 3,
+  "name": "NewtCBT-Utils",
+  "version": "1.2",
+  "description": "Unlock YouTube, Web Search, and Google AI God Mode in NewtCBT.",
+  "icons": {
+    "16": "logo.png",
+    "32": "logo.png",
+    "48": "logo.png",
+    "128": "logo.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "utils@newtcbt.com",
+      "strict_min_version": "121.0"
+    }
+  },
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://html.duckduckgo.com/*",
+    "*://*.google.com/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_1",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://localhost/*",
+        "*://*.buildtopia.fun/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "*://*.google.com/search*"
+      ],
+      "js": ["google_ai_scraper.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "*://gemini.google.com/*"
+      ],
+      "js": ["gemini_scraper.js"],
+      "run_at": "document_end",
+      "all_frames": false
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
