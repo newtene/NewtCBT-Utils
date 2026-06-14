@@ -12,10 +12,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "utils@newtcbt.com",
-      "strict_min_version": "121.0",
-      "data_collection_permissions": {
-        "required": ["none"]
-      }
+      "strict_min_version": "121.0"
     }
   },
   "permissions": [
@@ -66,6 +63,7 @@
     }
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
   }
 }
