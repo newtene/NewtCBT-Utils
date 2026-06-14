@@ -2,6 +2,15 @@
 const pendingAI = {};
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  const allowedDomains = ['newtcbt.vercel.app', 'buildtopia.fun', 'gemini.google.com', 'google.com'];
+  const senderUrl = sender.tab ? sender.tab.url : (sender.url || '');
+  const isAllowed = allowedDomains.some(domain => senderUrl.includes(domain));
+  
+  if (!isAllowed) {
+    sendResponse({ error: 'Unauthorized request origin' });
+    return false;
+  }
+
   if (request.type === 'FETCH_YOUTUBE') {
     fetchYoutube(request.query).then(sendResponse).catch(err => sendResponse({ error: err.toString() }));
     return true;

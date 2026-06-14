@@ -4,6 +4,11 @@ window.postMessage({ type: 'NEWTCBT_EXTENSION_READY' }, '*');
 window.addEventListener('message', function(event) {
   if (event.source !== window) return;
 
+  const allowedOrigins = ['https://newtcbt.vercel.app', 'https://buildtopia.fun'];
+  if (!allowedOrigins.includes(event.origin) && !event.origin.endsWith('.buildtopia.fun')) {
+    return;
+  }
+
   if (event.data.type && event.data.type === 'PING_NEWTCBT_EXTENSION') {
     window.postMessage({ type: 'NEWTCBT_EXTENSION_READY' }, '*');
   }
