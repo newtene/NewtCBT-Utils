@@ -12,6 +12,6 @@ Follow these simple steps to install the extension manually:
 4. **Extract and Select**: First, extract the downloaded zip file. When the file browser window opens, simply select that extracted folder to load the extension.
 
 ### Video Tutorial
-<video src="chrome.mp4" controls="controls" muted="muted" style="max-width:100%;"></video>
+
 
 You're all set! The companion extension is now active and ready to enhance your AI searches.
