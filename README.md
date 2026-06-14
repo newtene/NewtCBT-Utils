@@ -14,4 +14,8 @@ Follow these simple steps to install the extension manually:
 ### Video Tutorial
 
 
+https://github.com/user-attachments/assets/4ee93cd6-3fc3-4882-b946-897640021ce4
+
+
+
 You're all set! The companion extension is now active and ready to enhance your AI searches.
