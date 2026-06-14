@@ -1,5 +1,5 @@
 
-window.postMessage({ type: 'NEWTCBT_EXTENSION_READY' }, '*');
+window.postMessage({ type: 'NEWTCBT_EXTENSION_READY' }, window.location.origin);
 
 window.addEventListener('message', function(event) {
   if (event.source !== window) return;
@@ -10,14 +10,14 @@ window.addEventListener('message', function(event) {
   }
 
   if (event.data.type && event.data.type === 'PING_NEWTCBT_EXTENSION') {
-    window.postMessage({ type: 'NEWTCBT_EXTENSION_READY' }, '*');
+    window.postMessage({ type: 'NEWTCBT_EXTENSION_READY' }, window.location.origin);
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_YOUTUBE_SEARCH') {
     chrome.runtime.sendMessage(
       { type: 'FETCH_YOUTUBE', query: event.data.query },
       (response) => {
-        window.postMessage({ type: 'NEWTCBT_YOUTUBE_RESULTS', response }, '*');
+        window.postMessage({ type: 'NEWTCBT_YOUTUBE_RESULTS', response }, window.location.origin);
       }
     );
   }
@@ -27,7 +27,7 @@ window.addEventListener('message', function(event) {
       { type: 'FETCH_WEB', query: event.data.query },
       (response) => {
         if (response.error) {
-          window.postMessage({ type: 'NEWTCBT_WEB_RESULTS', response: { error: response.error } }, '*');
+          window.postMessage({ type: 'NEWTCBT_WEB_RESULTS', response: { error: response.error } }, window.location.origin);
           return;
         }
 
@@ -53,7 +53,7 @@ window.addEventListener('message', function(event) {
           }
         }
 
-        window.postMessage({ type: 'NEWTCBT_WEB_RESULTS', response: { results } }, '*');
+        window.postMessage({ type: 'NEWTCBT_WEB_RESULTS', response: { results } }, window.location.origin);
       }
     );
   }
@@ -72,7 +72,7 @@ window.addEventListener('message', function(event) {
           success: response?.success || false,
           text: response?.text || '',
           error: response?.error || 'No response from AI.'
-        }, '*');
+        }, window.location.origin);
       }
     );
   }
