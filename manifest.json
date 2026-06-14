@@ -41,7 +41,8 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*.buildtopia.fun/*"
+        "*://*.buildtopia.fun/*",
+        "*://newtcbt.vercel.app/*"
       ],
       "js": ["content.js"],
       "run_at": "document_start",
