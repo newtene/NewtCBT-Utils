@@ -1,3 +1,6 @@
+
+
+
 # NewtCBT-Utils
 
 > **Note:** This extension is compatible with both **Google Chrome** and **Mozilla Firefox**.
@@ -32,6 +35,7 @@ Follow these simple steps to load the extension manually:
 
 ### Video Tutorial
 
+https://github.com/user-attachments/assets/59654aaf-4eba-4be8-ae6d-ec559081827d
 
 
 ---
