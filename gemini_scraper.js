@@ -248,9 +248,9 @@
       if (messageBlocks.length === 0) return;
 
       const lastMessage = messageBlocks[messageBlocks.length - 1];
-      const codeBlock   = lastMessage.querySelector('code');
-      let currentText   = (codeBlock ? codeBlock.innerText : lastMessage.innerText) || '';
-      currentText = currentText.replace(/Use code with caution\./gi, '').trim();
+      let rawText = lastMessage.innerText || '';
+
+      let currentText = rawText.replace(/Use code with caution\./gi, '').trim();
 
       const text = lastMessage.innerText.trim();
       const justShowCode = text.replace(/Show code/ig, '').trim() === '';
@@ -268,6 +268,27 @@
           stableCount++;
           if (stableCount >= 3) {
             scraped = true;
+            
+            const removePatterns = [
+              /^AI Mode\s*/gi,
+              /^All\s+Images\s+Videos\s+News\s+More.*?\n/gi,
+              /\nShare\s*\n?Export\s*\n?More\s*$/gi,
+              /\nFeedback\s*$/gi,
+              /\nShow more\s*$/gi,
+              /If you'd like.*$/gis,
+              /Let me know.*$/gis,
+              /\[\d+\]/g,
+              /\[\]\(.*?\)/g,
+              /Show code/gi,
+              /show_code/gi
+            ];
+
+            for (const pattern of removePatterns) {
+              currentText = currentText.replace(pattern, '');
+            }
+
+            currentText = currentText.replace(/\n{3,}/g, '\n\n').trim();
+
             console.log('[GeminiScraper] Response stable ✓ Sending to background…');
             sendResult({ success: true, text: currentText });
           }
