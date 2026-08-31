@@ -1,11 +1,38 @@
 
 window.postMessage({ type: 'NEWTCBT_EXTENSION_READY' }, window.location.origin);
 
+function safeSendMessage(message, callback) {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+      chrome.runtime.sendMessage(message, (response) => {
+        const lastErr = chrome.runtime.lastError;
+        if (lastErr) {
+          console.warn('[NewtCBT-Utils] Runtime message warning:', lastErr.message);
+          callback && callback({ error: lastErr.message });
+          return;
+        }
+        callback && callback(response);
+      });
+      return true;
+    }
+  } catch (e) {
+    console.warn('[NewtCBT-Utils] Extension context error:', e);
+  }
+  callback && callback({ error: 'Extension context invalidated. Please reload the page.' });
+  return false;
+}
+
 window.addEventListener('message', function(event) {
   if (event.source !== window) return;
 
-  const allowedOrigins = ['https://newtcbt.vercel.app', 'https://buildtopia.fun'];
-  if (!allowedOrigins.includes(event.origin) && !event.origin.endsWith('.buildtopia.fun')) {
+  const origin = event.origin || '';
+  const isAllowedOrigin = 
+    origin === 'https://newtcbt.in' ||
+    origin === 'http://newtcbt.in' ||
+    origin.endsWith('.newtcbt.in') ||
+    origin.includes('localhost');
+
+  if (!isAllowedOrigin) {
     return;
   }
 
@@ -14,20 +41,20 @@ window.addEventListener('message', function(event) {
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_YOUTUBE_SEARCH') {
-    chrome.runtime.sendMessage(
+    safeSendMessage(
       { type: 'FETCH_YOUTUBE', query: event.data.query },
       (response) => {
-        window.postMessage({ type: 'NEWTCBT_YOUTUBE_RESULTS', response }, window.location.origin);
+        window.postMessage({ type: 'NEWTCBT_YOUTUBE_RESULTS', response: response || {} }, window.location.origin);
       }
     );
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_WEB_SEARCH') {
-    chrome.runtime.sendMessage(
+    safeSendMessage(
       { type: 'FETCH_WEB', query: event.data.query },
       (response) => {
-        if (response.error) {
-          window.postMessage({ type: 'NEWTCBT_WEB_RESULTS', response: { error: response.error } }, window.location.origin);
+        if (!response || response.error) {
+          window.postMessage({ type: 'NEWTCBT_WEB_RESULTS', response: { error: response?.error || 'Failed to fetch web results' } }, window.location.origin);
           return;
         }
 
@@ -59,10 +86,11 @@ window.addEventListener('message', function(event) {
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_AI_SEARCH') {
-    chrome.runtime.sendMessage(
+    safeSendMessage(
       {
         type: 'FETCH_AI_ANSWER',
         query: event.data.query,
+        image: event.data.image || null,
         source: event.data.source || 'google',
         grounding: event.data.grounding || false
       },
@@ -72,6 +100,38 @@ window.addEventListener('message', function(event) {
           success: response?.success || false,
           text: response?.text || '',
           error: response?.error || 'No response from AI.'
+        }, window.location.origin);
+      }
+    );
+  }
+
+  if (event.data.type && event.data.type === 'NEWTCBT_PREPARE_EMBED') {
+    safeSendMessage(
+      {
+        type: 'PREPARE_EMBED',
+        query: event.data.query,
+        image: event.data.image || null,
+        source: event.data.source || 'gemini'
+      },
+      (response) => {
+        window.postMessage({
+          type: 'NEWTCBT_EMBED_READY',
+          success: response?.success || false,
+          url: response?.url || ''
+        }, window.location.origin);
+      }
+    );
+  }
+
+  if (event.data.type && event.data.type === 'NEWTCBT_EXTRACT_SOLN') {
+    safeSendMessage(
+      { type: 'TRIGGER_EXTRACT_SOLN' },
+      (response) => {
+        window.postMessage({
+          type: 'NEWTCBT_EXTRACTED_SOLN_RESULT',
+          success: response?.success || false,
+          text: response?.text || '',
+          error: response?.error || 'Could not extract solution from assistant.'
         }, window.location.origin);
       }
     );

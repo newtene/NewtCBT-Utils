@@ -2,7 +2,7 @@
 const pendingAI = {};
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  const allowedDomains = ['newtcbt.vercel.app', 'buildtopia.fun', 'gemini.google.com', 'google.com'];
+  const allowedDomains = ['newtcbt.in', 'gemini.google.com', 'google.com'];
   const senderUrl = sender.tab ? sender.tab.url : (sender.url || '');
   const isAllowed = allowedDomains.some(domain => senderUrl.includes(domain));
   
@@ -29,15 +29,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (source === 'gemini') {
       chrome.storage.local.set({
         newtcbt_gemini_query: query,
+        newtcbt_gemini_image: request.image || null,
         newtcbt_gemini_grounding: request.grounding
       });
       url = `https://gemini.google.com/app`;
     } else {
-      const encodedQuery = encodeURIComponent(query);
-      url = `https://www.google.com/search?q=${encodedQuery}&udm=50`;
+      chrome.storage.local.set({
+        newtcbt_google_ai_query: query,
+        newtcbt_google_ai_image: request.image || null
+      });
+      if (request.image) {
+        url = `https://www.google.com/search?udm=50`;
+      } else {
+        const encodedQuery = encodeURIComponent(query || 'JEE exam solution');
+        url = `https://www.google.com/search?q=${encodedQuery}&udm=50`;
+      }
     }
 
-    chrome.tabs.create({ url, active: false, pinned: true }, (tab) => {
+    chrome.tabs.create({ url, active: true }, (tab) => {
       const tabId = tab.id;
 
       pendingAI[tabId] = {
@@ -53,6 +62,79 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
 
     return true;
+  }
+
+  if (request.type === 'PREPARE_EMBED') {
+    const source = request.source || 'gemini';
+    const query = request.query || 'Solve this exam question step-by-step.';
+    const image = request.image || null;
+
+    if (source === 'gemini') {
+      chrome.storage.local.set({
+        newtcbt_gemini_query: query,
+        newtcbt_gemini_image: image,
+        newtcbt_gemini_embed: true,
+        newtcbt_gemini_grounding: false
+      }, () => {
+        sendResponse({ success: true, url: 'https://gemini.google.com/app' });
+      });
+    } else {
+      chrome.storage.local.set({
+        newtcbt_google_ai_query: query,
+        newtcbt_google_ai_image: image,
+        newtcbt_google_ai_embed: true
+      }, () => {
+        const url = image ? 'https://www.google.com/search?udm=50' : `https://www.google.com/search?udm=50&q=${encodeURIComponent(query)}`;
+        sendResponse({ success: true, url });
+      });
+    }
+    return true;
+  }
+
+  if (request.type === 'TRIGGER_EXTRACT_SOLN') {
+    const tabId = sender.tab?.id;
+    if (tabId) {
+      if (chrome.webNavigation && chrome.webNavigation.getAllFrames) {
+        chrome.webNavigation.getAllFrames({ tabId }, (frames) => {
+          const frameErr = chrome.runtime.lastError;
+          if (frameErr || !frames || frames.length === 0) {
+            chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_SOLN_NOW' }, (resp) => {
+              const lastErr = chrome.runtime.lastError;
+              sendResponse(resp || { success: false, error: lastErr?.message || 'Assistant did not respond.' });
+            });
+            return;
+          }
+
+          // Prioritize frames matching Gemini or Google AI Mode
+          const aiFrames = frames.filter(f => f.url && (f.url.includes('gemini.google.com') || f.url.includes('google.com')));
+          const candidateFrames = aiFrames.length > 0 ? aiFrames : frames.filter(f => f.frameId !== 0);
+          const framesToQuery = candidateFrames.length > 0 ? candidateFrames : frames;
+
+          let responded = false;
+          let pending = framesToQuery.length;
+
+          framesToQuery.forEach((frame) => {
+            chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_SOLN_NOW' }, { frameId: frame.frameId }, (resp) => {
+              const lastErr = chrome.runtime.lastError; // Read lastError so Chrome suppresses unhandled error logging
+              if (!responded && resp && resp.success) {
+                responded = true;
+                sendResponse(resp);
+              }
+              pending--;
+              if (pending === 0 && !responded) {
+                sendResponse({ success: false, error: 'Assistant did not respond.' });
+              }
+            });
+          });
+        });
+      } else {
+        chrome.tabs.sendMessage(tabId, { type: 'EXTRACT_SOLN_NOW' }, (resp) => {
+          const lastErr = chrome.runtime.lastError;
+          sendResponse(resp || { success: false, error: 'Assistant did not respond.' });
+        });
+      }
+      return true;
+    }
   }
 
   if (request.type === 'AI_SCRAPER_RESULT') {
@@ -74,7 +156,7 @@ async function fetchYoutube(query) {
     const response = await fetch(url);
     const html = await response.text();
 
-    const ytInitDataMatch = html.match(/var ytInitialData = (\{.*?\});/);
+    const ytInitDataMatch = html.match(/(?:var\s+ytInitialData|window\["ytInitialData"\]|ytInitialData)\s*=\s*(\{.*?\});/);
     if (!ytInitDataMatch) return { error: "Failed to parse YouTube page." };
 
     const ytData = JSON.parse(ytInitDataMatch[1]);
