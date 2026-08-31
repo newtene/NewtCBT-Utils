@@ -25,6 +25,8 @@
   "host_permissions": [
     "*://*.youtube.com/*",
     "*://html.duckduckgo.com/*",
+    "*://*.duckduckgo.com/*",
+    "*://duckduckgo.com/*",
     "*://*.google.com/*",
     "*://*.newtcbt.in/*",
     "*://newtcbt.in/*"

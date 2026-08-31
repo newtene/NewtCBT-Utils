@@ -2,7 +2,7 @@
 const pendingAI = {};
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  const allowedDomains = ['newtcbt.in', 'gemini.google.com', 'google.com'];
+  const allowedDomains = ['newtcbt.in', 'gemini.google.com', 'google.com', 'localhost', '127.0.0.1'];
   const senderUrl = sender.tab ? sender.tab.url : (sender.url || '');
   const isAllowed = allowedDomains.some(domain => senderUrl.includes(domain));
   
@@ -152,32 +152,89 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 async function fetchYoutube(query) {
   try {
     const encodedQuery = encodeURIComponent(query);
-    const url = `https://www.youtube.com/results?search_query=${encodedQuery}`;
-    const response = await fetch(url);
-    const html = await response.text();
 
-    const ytInitDataMatch = html.match(/(?:var\s+ytInitialData|window\["ytInitialData"\]|ytInitialData)\s*=\s*(\{.*?\});/);
-    if (!ytInitDataMatch) return { error: "Failed to parse YouTube page." };
+    // 1. Primary: DuckDuckGo Video Search API (Fast, pure JSON, includes exact durations & all video sources)
+    try {
+      const initHtml = await fetch(`https://duckduckgo.com/?q=${encodedQuery}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      }).then(r => r.text());
 
-    const ytData = JSON.parse(ytInitDataMatch[1]);
-    const contents = ytData?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents[0]?.itemSectionRenderer?.contents || [];
+      const vqdMatch = initHtml.match(/vqd=([0-9-]+)/) || initHtml.match(/vqd=['"]([0-9-]+)['"]/);
+      if (vqdMatch) {
+        const vqd = vqdMatch[1];
+        const videoApiUrl = `https://duckduckgo.com/v.js?l=us-en&o=json&q=${encodedQuery}&vqd=${vqd}&f=,,,&p=1`;
+        const data = await fetch(videoApiUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://duckduckgo.com/'
+          }
+        }).then(r => r.json());
 
-    const videos = [];
-    for (const item of contents) {
-      if (item.videoRenderer && videos.length < 4) {
-        const vr = item.videoRenderer;
-        videos.push({
-          videoId: vr.videoId,
-          title: vr.title?.runs?.[0]?.text || "",
-          url: `https://youtube.com/watch?v=${vr.videoId}`,
-          thumbnail: `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`,
-          duration: vr.lengthText?.simpleText || "",
-          author: vr.ownerText?.runs?.[0]?.text || ""
-        });
+        const results = data.results || [];
+        if (results.length > 0) {
+          const videos = [];
+          for (const item of results) {
+            if (videos.length >= 40) break;
+
+            const contentUrl = item.content || '';
+            const ytMatch = contentUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+            const videoId = ytMatch ? ytMatch[1] : null;
+
+            let thumbnail = item.images?.large || item.images?.medium || item.images?.small || '';
+            if (videoId && (!thumbnail || thumbnail.includes('bing.net'))) {
+              thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+            }
+
+            videos.push({
+              videoId: videoId || '',
+              title: item.title || '',
+              url: contentUrl,
+              thumbnail,
+              duration: item.duration || '',
+              author: item.uploader || item.publisher || 'Video',
+              publisher: item.publisher || (videoId ? 'YouTube' : 'Web')
+            });
+          }
+
+          if (videos.length > 0) {
+            return { videos };
+          }
+        }
       }
+    } catch (e) {
+      console.warn('[NewtCBT-Utils] DDG Video API error, trying fallback:', e);
     }
 
-    return { videos };
+    // 2. Secondary fallback: Direct YouTube page scraping
+    try {
+      const ytUrl = `https://www.youtube.com/results?search_query=${encodedQuery}`;
+      const ytHtml = await fetch(ytUrl).then(r => r.text());
+      const ytInitMatch = ytHtml.match(/(?:var\s+ytInitialData|window\["ytInitialData"\]|ytInitialData)\s*=\s*(\{.*?\});/s);
+      if (ytInitMatch) {
+        const ytData = JSON.parse(ytInitMatch[1]);
+        const contents = ytData?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents || [];
+        const videos = [];
+        for (const item of contents) {
+          if (item.videoRenderer && videos.length < 30) {
+            const vr = item.videoRenderer;
+            videos.push({
+              videoId: vr.videoId,
+              title: vr.title?.runs?.[0]?.text || '',
+              url: `https://youtube.com/watch?v=${vr.videoId}`,
+              thumbnail: `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`,
+              duration: vr.lengthText?.simpleText || '',
+              author: vr.ownerText?.runs?.[0]?.text || '',
+              publisher: 'YouTube'
+            });
+          }
+        }
+        if (videos.length > 0) return { videos };
+      }
+    } catch (e) {}
+
+    return { error: 'No video results found.' };
   } catch (error) {
     return { error: error.message };
   }
