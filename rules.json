@@ -16,7 +16,7 @@
       ]
     },
     "condition": {
-      "urlFilter": "||google.com*",
+      "urlFilter": "||gemini.google.com*",
       "resourceTypes": ["sub_frame"]
     }
   },
@@ -37,7 +37,28 @@
       ]
     },
     "condition": {
-      "urlFilter": "||gemini.google.com*",
+      "urlFilter": "||aistudio.google.com*",
+      "resourceTypes": ["sub_frame"]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "responseHeaders": [
+        { "header": "x-frame-options", "operation": "remove" },
+        { "header": "frame-options", "operation": "remove" },
+        { "header": "content-security-policy", "operation": "remove" },
+        { "header": "content-security-policy-report-only", "operation": "remove" },
+        { "header": "x-content-security-policy", "operation": "remove" },
+        { "header": "x-webkit-csp", "operation": "remove" },
+        { "header": "cross-origin-embedder-policy", "operation": "remove" },
+        { "header": "cross-origin-opener-policy", "operation": "remove" }
+      ]
+    },
+    "condition": {
+      "urlFilter": "||www.google.com/search*",
       "resourceTypes": ["sub_frame"]
     }
   }

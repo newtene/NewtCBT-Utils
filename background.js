@@ -147,7 +147,146 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     return false;
   }
+
+  if (request.type === 'START_ALT_STAGE' || request.type === 'START_GEM_STAGE') {
+    const stagePayload = {
+      newtcbt_alt_stage: request.stage || 'text',
+      newtcbt_alt_file: request.file || null,
+      newtcbt_alt_prompt: request.prompt || '',
+      newtcbt_alt_job_id: request.jobId || ('job_' + Date.now()),
+      newtcbt_alt_timestamp: Date.now(),
+      newtcbt_alt_is_retry: !!request.isRetry,
+      newtcbt_gem_stage: request.stage || 'text',
+      newtcbt_gem_file: request.file || null,
+      newtcbt_gem_prompt: request.prompt || '',
+      newtcbt_gem_job_id: request.jobId || ('job_' + Date.now()),
+      newtcbt_gem_timestamp: Date.now(),
+      newtcbt_gem_is_retry: !!request.isRetry
+    };
+
+    chrome.storage.local.set(stagePayload, () => {
+      broadcastToAIStudioFrames({
+        type: 'START_ALT_STAGE',
+        stage: stagePayload.newtcbt_alt_stage,
+        file: stagePayload.newtcbt_alt_file,
+        prompt: stagePayload.newtcbt_alt_prompt,
+        jobId: stagePayload.newtcbt_alt_job_id,
+        isRetry: !!request.isRetry
+      });
+      sendResponse({ success: true, jobId: stagePayload.newtcbt_alt_job_id });
+    });
+    return true;
+  }
+
+  if (request.type === 'ALT_STAGE_PROGRESS' || request.type === 'GEM_STAGE_PROGRESS') {
+    broadcastToNewtCBTTabs({
+      type: 'NEWTCBT_GEM_PROGRESS',
+      stage: request.stage,
+      status: request.status,
+      length: request.length || 0,
+      percent: request.percent || 0,
+      jobId: request.jobId
+    });
+    broadcastToNewtCBTTabs({
+      type: 'NEWTCBT_ALT_PROGRESS',
+      stage: request.stage,
+      status: request.status,
+      length: request.length || 0,
+      percent: request.percent || 0,
+      jobId: request.jobId
+    });
+    sendResponse({ success: true });
+    return false;
+  }
+
+  if (request.type === 'ALT_STAGE_COMPLETE' || request.type === 'GEM_STAGE_COMPLETE') {
+    chrome.storage.local.set({
+      newtcbt_last_gem_result: {
+        stage: request.stage,
+        result: request.result || '',
+        jobId: request.jobId,
+        success: request.success !== false,
+        error: request.error || null,
+        timestamp: Date.now()
+      }
+    });
+
+    broadcastToNewtCBTTabs({
+      type: 'NEWTCBT_GEM_COMPLETE',
+      stage: request.stage,
+      result: request.result || '',
+      jobId: request.jobId,
+      success: request.success !== false,
+      error: request.error || null
+    });
+    broadcastToNewtCBTTabs({
+      type: 'NEWTCBT_ALT_COMPLETE',
+      stage: request.stage,
+      result: request.result || '',
+      jobId: request.jobId,
+      success: request.success !== false,
+      error: request.error || null
+    });
+    sendResponse({ success: true });
+    return false;
+  }
+
+  if (request.type === 'ALT_STAGE_ERROR' || request.type === 'GEM_STAGE_ERROR') {
+    broadcastToNewtCBTTabs({
+      type: 'NEWTCBT_GEM_ERROR',
+      stage: request.stage,
+      error: request.error || 'Stage failed',
+      jobId: request.jobId
+    });
+    broadcastToNewtCBTTabs({
+      type: 'NEWTCBT_ALT_ERROR',
+      stage: request.stage,
+      error: request.error || 'Stage failed',
+      jobId: request.jobId
+    });
+    sendResponse({ success: true });
+    return false;
+  }
 });
+
+function broadcastToAIStudioFrames(payload) {
+  chrome.tabs.query({}, (tabs) => {
+    tabs.forEach((tab) => {
+      if (tab.url && (tab.url.includes('aistudio.google.com') || tab.url.includes('gemini.google.com'))) {
+        chrome.tabs.sendMessage(tab.id, payload, () => {
+          if (chrome.runtime.lastError) {}
+        });
+      }
+      if (tab.url && (tab.url.includes('newtcbt.in') || tab.url.includes('localhost'))) {
+        if (chrome.webNavigation && chrome.webNavigation.getAllFrames) {
+          chrome.webNavigation.getAllFrames({ tabId: tab.id }, (frames) => {
+            if (frames && frames.length) {
+              frames.forEach((f) => {
+                if (f.frameId !== 0 && f.url && (f.url.includes('aistudio.google.com') || f.url.includes('gemini.google.com'))) {
+                  chrome.tabs.sendMessage(tab.id, payload, { frameId: f.frameId }, () => {
+                    if (chrome.runtime.lastError) {}
+                  });
+                }
+              });
+            }
+          });
+        }
+      }
+    });
+  });
+}
+
+function broadcastToNewtCBTTabs(payload) {
+  chrome.tabs.query({}, (tabs) => {
+    tabs.forEach((tab) => {
+      if (tab.url && (tab.url.includes('newtcbt.in') || tab.url.includes('localhost'))) {
+        chrome.tabs.sendMessage(tab.id, payload, () => {
+          if (chrome.runtime.lastError) {}
+        });
+      }
+    });
+  });
+}
 
 async function fetchYoutube(query) {
   try {

@@ -136,4 +136,57 @@ window.addEventListener('message', function(event) {
       }
     );
   }
+
+  if (event.data.type && (event.data.type === 'NEWTCBT_START_ALT_STAGE' || event.data.type === 'NEWTCBT_START_GEM_STAGE')) {
+    safeSendMessage(
+      {
+        type: 'START_ALT_STAGE',
+        stage: event.data.stage,
+        file: event.data.file || null,
+        prompt: event.data.prompt || '',
+        jobId: event.data.jobId || ('job_' + Date.now()),
+        isRetry: !!event.data.isRetry
+      },
+      (response) => {
+        if (response && response.error) {
+          window.postMessage({
+            type: 'NEWTCBT_ALT_COMPLETE',
+            stage: event.data.stage,
+            result: '',
+            jobId: event.data.jobId,
+            success: false,
+            error: response.error
+          }, window.location.origin);
+          window.postMessage({
+            type: 'NEWTCBT_GEM_COMPLETE',
+            stage: event.data.stage,
+            result: '',
+            jobId: event.data.jobId,
+            success: false,
+            error: response.error
+          }, window.location.origin);
+        }
+      }
+    );
+  }
 });
+
+// Forward background runtime messages to client window
+if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || !msg.type) return;
+
+    if (
+      msg.type === 'NEWTCBT_GEM_PROGRESS' ||
+      msg.type === 'NEWTCBT_ALT_PROGRESS' ||
+      msg.type === 'NEWTCBT_GEM_COMPLETE' ||
+      msg.type === 'NEWTCBT_ALT_COMPLETE' ||
+      msg.type === 'NEWTCBT_GEM_ERROR' ||
+      msg.type === 'NEWTCBT_ALT_ERROR'
+    ) {
+      window.postMessage(msg, window.location.origin);
+      sendResponse && sendResponse({ relayed: true });
+    }
+  });
+}
+

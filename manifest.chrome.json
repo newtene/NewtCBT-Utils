@@ -1,0 +1,77 @@
+{
+  "manifest_version": 3,
+  "name": "NewtCBT-Utils",
+  "version": "3.0.3",
+  "description": "Unlock YouTube, Web Search, and Google AI God Mode in NewtCBT.",
+  "icons": {
+    "16": "logo-16.png",
+    "32": "logo-32.png",
+    "48": "logo-48.png",
+    "128": "logo-128.png"
+  },
+  "permissions": [
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "tabs",
+    "storage",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "*://*.youtube.com/*",
+    "*://html.duckduckgo.com/*",
+    "*://*.duckduckgo.com/*",
+    "*://duckduckgo.com/*",
+    "*://www.google.com/search*",
+    "*://gemini.google.com/*",
+    "*://aistudio.google.com/*",
+    "*://*.newtcbt.in/*",
+    "*://newtcbt.in/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset_1",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.newtcbt.in/*",
+        "*://newtcbt.in/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "*://www.google.com/search*"
+      ],
+      "js": ["google_ai_scraper.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "*://gemini.google.com/*"
+      ],
+      "js": ["gemini_scraper.js"],
+      "run_at": "document_end",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "*://aistudio.google.com/*"
+      ],
+      "js": ["alt.js"],
+      "run_at": "document_end",
+      "all_frames": true
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

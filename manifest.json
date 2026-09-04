@@ -9,12 +9,6 @@
     "48": "logo-48.png",
     "128": "logo-128.png"
   },
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "utils@newtcbt.com",
-      "strict_min_version": "121.0"
-    }
-  },
   "permissions": [
     "declarativeNetRequest",
     "declarativeNetRequestWithHostAccess",
@@ -27,7 +21,9 @@
     "*://html.duckduckgo.com/*",
     "*://*.duckduckgo.com/*",
     "*://duckduckgo.com/*",
-    "*://*.google.com/*",
+    "*://www.google.com/search*",
+    "*://gemini.google.com/*",
+    "*://aistudio.google.com/*",
     "*://*.newtcbt.in/*",
     "*://newtcbt.in/*"
   ],
@@ -52,7 +48,7 @@
     },
     {
       "matches": [
-        "*://*.google.com/search*"
+        "*://www.google.com/search*"
       ],
       "js": ["google_ai_scraper.js"],
       "run_at": "document_start",
@@ -65,10 +61,17 @@
       "js": ["gemini_scraper.js"],
       "run_at": "document_end",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "*://aistudio.google.com/*"
+      ],
+      "js": ["alt.js"],
+      "run_at": "document_end",
+      "all_frames": true
     }
   ],
   "background": {
-    "service_worker": "background.js",
-    "scripts": ["background.js"]
+    "service_worker": "background.js"
   }
 }
