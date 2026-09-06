@@ -240,6 +240,41 @@
       overflow: visible;
     }
 
+    /* Pure red font notice text directly in the layout without any box/section */
+    .retry-hint-text {
+      color: #ef4444;
+      font-size: 11px;
+      font-weight: 500;
+      line-height: 1.35;
+      padding: 0 1px;
+      user-select: none;
+    }
+
+    .new-chat-tick-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+      padding: 2px 1px 0 1px;
+    }
+    .new-chat-tick-input {
+      accent-color: #ef4444;
+      width: 12px;
+      height: 12px;
+      cursor: pointer;
+      margin: 0;
+    }
+    .new-chat-tick-text {
+      font-size: 10.5px;
+      color: #a1a1aa;
+      font-weight: 500;
+      transition: color 0.15s;
+    }
+    .new-chat-tick-label:hover .new-chat-tick-text {
+      color: #e4e4e7;
+    }
+
     /* Minimalist Unified Inline Retry Control: [ Retry Step with ] [ 3.8 Flash ▾ ] (Zinc-White Theme) */
     .retry-inline-wrap {
       position: relative;
@@ -542,6 +577,7 @@
           </div>
         </div>
         <div class="actions-footer">
+          <div class="retry-hint-text">Facing problems? Try this step with diff model</div>
           <!-- Minimalist Unified Retry Step with Custom Dropdown -->
           <div class="retry-inline-wrap">
             <button class="retry-action-btn" id="btn-retry" title="Retry current step with selected model">
@@ -566,6 +602,10 @@
               </div>
             </div>
           </div>
+          <label class="new-chat-tick-label" title="Close current chat and open a fresh tab to retry">
+            <input type="checkbox" id="chk-use-new-chat" class="new-chat-tick-input" />
+            <span class="new-chat-tick-text">Use new chat for retrying this step</span>
+          </label>
         </div>
       ` : `
         <button class="btn-retry-soln" id="btn-retry-soln" title="Re-paste and re-submit this question">
@@ -747,38 +787,60 @@
       btnRetry.disabled = true;
       btnRetry.innerHTML = `<div class="spinner"></div><span>Retrying...</span>`;
 
+      const chkUseNewChat = shadow.getElementById('chk-use-new-chat');
+      const useNewChat = chkUseNewChat ? chkUseNewChat.checked : false;
+
       chrome.storage.local.get(
         ['newtcbt_alt_stage', 'newtcbt_alt_file', 'newtcbt_alt_prompt',
-         'newtcbt_gem_stage', 'newtcbt_gem_file', 'newtcbt_gem_prompt'],
+         'newtcbt_gem_stage', 'newtcbt_gem_file', 'newtcbt_gem_prompt',
+         'newtcbt_qp_file'],
         (res) => {
           const stage = res.newtcbt_alt_stage || res.newtcbt_gem_stage || 'sylvie';
-          const file = res.newtcbt_alt_file || res.newtcbt_gem_file || null;
+          let file = res.newtcbt_alt_file || res.newtcbt_gem_file || null;
+          if (!file && (stage === 'dia' || stage === 'diagram' || stage === 'crop') && res.newtcbt_qp_file) {
+            file = res.newtcbt_qp_file;
+          }
           const prompt = res.newtcbt_alt_prompt || res.newtcbt_gem_prompt || '';
           const newJobId = `job_${stage}_retry_${Date.now()}`;
 
           if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
-            chrome.runtime.sendMessage({
-              type: 'START_ALT_STAGE',
-              stage,
-              file,
-              prompt,
-              jobId: newJobId,
-              isRetry: true,
-              model: activeModel
-            }, () => {
-              setTimeout(() => {
-                btnRetry.disabled = false;
-                btnRetry.innerHTML = `
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-                    <path d="M3 3v5h5"/>
-                    <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
-                    <path d="M16 21h5v-5"/>
-                  </svg>
-                  <span>Retry Step with</span>
-                `;
-              }, 2500);
-            });
+            if (useNewChat) {
+              // Close current tab and open a fresh AI Studio tab configured with selected model
+              chrome.runtime.sendMessage({
+                type: 'RETRY_IN_NEW_TAB',
+                stage,
+                file,
+                prompt,
+                jobId: newJobId,
+                model: activeModel
+              }, () => {
+                // Background handles closing the current tab and opening the new tab
+              });
+            } else {
+              // Retry with selected model in the SAME conversation / tab
+              chrome.runtime.sendMessage({
+                type: 'START_ALT_STAGE',
+                stage,
+                file,
+                prompt,
+                jobId: newJobId,
+                isRetry: true,
+                model: activeModel
+              }, () => {
+                setTimeout(() => {
+                  btnRetry.disabled = false;
+                  btnRetry.innerHTML = `
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                      <path d="M3 3v5h5"/>
+                      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+                      <path d="M16 21h5v-5"/>
+                    </svg>
+                    <span>Retry Step with</span>
+                  `;
+                }, 2500);
+              });
+            }
           }
         }
       );
@@ -858,7 +920,7 @@
 
         const basePercentMap = {
           sylvie: 25,
-          loki: 53,
+          loki: 54,
           dia: 71,
           done: 100
         };
@@ -879,9 +941,18 @@
       }
 
       if (msg.type === 'NEWTCBT_ALT_COMPLETE' || msg.type === 'ALT_STAGE_COMPLETE') {
-        if (progressBarFill) progressBarFill.style.width = '100%';
-        if (progressPercentText) progressPercentText.innerText = '100%';
-        if (progressLabel) progressLabel.innerText = 'COMPLETED';
+        const completedStage = msg.stage || currentStage;
+        if (completedStage === 'dia' || completedStage === 'done' || completedStage === 'final') {
+          if (progressBarFill) progressBarFill.style.width = '100%';
+          if (progressPercentText) progressPercentText.innerText = '100%';
+          if (progressLabel) progressLabel.innerText = 'COMPLETED';
+        } else if (completedStage === 'sylvie') {
+          if (progressBarFill) progressBarFill.style.width = '54%';
+          if (progressPercentText) progressPercentText.innerText = '54%';
+        } else if (completedStage === 'loki') {
+          if (progressBarFill) progressBarFill.style.width = '71%';
+          if (progressPercentText) progressPercentText.innerText = '71%';
+        }
       }
 
       if (msg.type === 'NEWTCBT_AI_STUDIO_MODEL_UPDATED' && msg.model) {

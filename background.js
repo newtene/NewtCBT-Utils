@@ -3,12 +3,20 @@ const pendingAI = {};
 let activeCompanionTabId = null;
 let activeNewtCbtTabId = null;
 
+// Restore active tab IDs from storage on service worker boot
+chrome.storage.local.get(['newtcbt_active_companion_tab_id', 'newtcbt_active_newtcbt_tab_id'], (res) => {
+  if (res?.newtcbt_active_companion_tab_id) activeCompanionTabId = res.newtcbt_active_companion_tab_id;
+  if (res?.newtcbt_active_newtcbt_tab_id) activeNewtCbtTabId = res.newtcbt_active_newtcbt_tab_id;
+});
+
 chrome.tabs.onRemoved.addListener((closedTabId) => {
   if (activeCompanionTabId === closedTabId) {
     activeCompanionTabId = null;
+    chrome.storage.local.remove(['newtcbt_active_companion_tab_id']);
   }
   if (activeNewtCbtTabId === closedTabId) {
     activeNewtCbtTabId = null;
+    chrome.storage.local.remove(['newtcbt_active_newtcbt_tab_id']);
   }
   if (pendingAI[closedTabId]) {
     clearTimeout(pendingAI[closedTabId].timer);
@@ -92,25 +100,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === 'LAUNCH_PINNED_STAGE') {
     if (sender.tab?.id) {
       activeNewtCbtTabId = sender.tab.id;
+      chrome.storage.local.set({ newtcbt_active_newtcbt_tab_id: activeNewtCbtTabId });
     }
     const model = request.model || 'gemini-3.8-flash';
     const timestamp = Date.now();
     const targetUrl = `https://aistudio.google.com/prompts/new_chat?model=${encodeURIComponent(model)}&_s=${timestamp}#newtcbt_companion=1`;
 
-    const openOrReuseTab = () => {
-      if (activeCompanionTabId) {
-        chrome.tabs.get(activeCompanionTabId, (existingTab) => {
-          if (!chrome.runtime.lastError && existingTab) {
-            chrome.tabs.update(activeCompanionTabId, { active: true }, () => {
-              sendResponse({ success: true, tabId: activeCompanionTabId, reused: true });
-            });
-            return;
-          }
-          createNewPinnedTab();
-        });
-      } else {
+    const checkAndReuse = (tabId) => {
+      chrome.tabs.get(tabId, (existingTab) => {
+        if (!chrome.runtime.lastError && existingTab) {
+          activeCompanionTabId = tabId;
+          chrome.storage.local.set({ newtcbt_active_companion_tab_id: tabId });
+          chrome.tabs.update(tabId, { active: true }, () => {
+            sendResponse({ success: true, tabId, reused: true });
+          });
+          return;
+        }
+        findOpenAiStudioTab();
+      });
+    };
+
+    const findOpenAiStudioTab = () => {
+      chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
+        if (!chrome.runtime.lastError && tabs && tabs.length > 0) {
+          const existing = tabs[tabs.length - 1];
+          activeCompanionTabId = existing.id;
+          chrome.storage.local.set({ newtcbt_active_companion_tab_id: existing.id });
+          chrome.tabs.update(existing.id, { active: true }, () => {
+            sendResponse({ success: true, tabId: existing.id, reused: true });
+          });
+          return;
+        }
         createNewPinnedTab();
-      }
+      });
     };
 
     const createNewPinnedTab = () => {
@@ -120,8 +142,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         active: true
       }, (newTab) => {
         activeCompanionTabId = newTab ? newTab.id : null;
+        if (activeCompanionTabId) {
+          chrome.storage.local.set({ newtcbt_active_companion_tab_id: activeCompanionTabId });
+        }
         sendResponse({ success: true, tabId: activeCompanionTabId, reused: false });
       });
+    };
+
+    const openOrReuseTab = () => {
+      if (activeCompanionTabId) {
+        checkAndReuse(activeCompanionTabId);
+      } else {
+        chrome.storage.local.get(['newtcbt_active_companion_tab_id'], (res) => {
+          if (res && res.newtcbt_active_companion_tab_id) {
+            checkAndReuse(res.newtcbt_active_companion_tab_id);
+          } else {
+            findOpenAiStudioTab();
+          }
+        });
+      }
     };
 
     openOrReuseTab();
@@ -362,6 +401,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       newtcbt_gem_model: request.model || 'gemini-3.8-flash'
     };
 
+    if (request.file) {
+      stagePayload.newtcbt_qp_file = request.file;
+    }
+
     chrome.storage.local.set(stagePayload, () => {
       if (chrome.runtime.lastError) {
         console.warn('[NewtCBT Storage]', chrome.runtime.lastError.message);
@@ -450,17 +493,112 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       error: request.error || null
     });
 
-    // If running in a companion tab and final stage completed or requested, switch focus back to NewtCBT
-    if (activeNewtCbtTabId && (request.stage === 'dia' || request.stage === 'final' || request.returnFocus)) {
-      chrome.tabs.update(activeNewtCbtTabId, { active: true }).catch(() => {});
-      if (activeCompanionTabId && request.closeCompanion) {
-        chrome.tabs.remove(activeCompanionTabId).catch(() => {});
-        activeCompanionTabId = null;
+    // If running in a companion tab and final/diagram stage completed or requested, switch focus back to NewtCBT and CLOSE the companion tab
+    if (request.stage === 'dia' || request.stage === 'final' || request.closeCompanion || request.returnFocus) {
+      if (activeNewtCbtTabId) {
+        chrome.tabs.update(activeNewtCbtTabId, { active: true }).catch(() => {});
+      } else {
+        chrome.tabs.query({ url: ['*://*.newtcbt.in/*', '*://localhost/*'] }, (tabs) => {
+          if (tabs && tabs.length > 0) {
+            chrome.tabs.update(tabs[0].id, { active: true }).catch(() => {});
+          }
+        });
+      }
+      if (request.stage === 'dia' || request.stage === 'final' || request.closeCompanion) {
+        if (activeCompanionTabId) {
+          chrome.tabs.remove(activeCompanionTabId).catch(() => {});
+          activeCompanionTabId = null;
+          chrome.storage.local.remove(['newtcbt_active_companion_tab_id']);
+        } else {
+          chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
+            if (tabs && tabs.length > 0) {
+              chrome.tabs.remove(tabs.map(t => t.id)).catch(() => {});
+            }
+          });
+        }
       }
     }
 
     sendResponse({ success: true });
     return false;
+  }
+
+  // Explicitly close companion tab from NewtCBT
+  if (request.type === 'CLOSE_COMPANION_TAB') {
+    if (activeNewtCbtTabId) {
+      chrome.tabs.update(activeNewtCbtTabId, { active: true }).catch(() => {});
+    }
+    if (activeCompanionTabId) {
+      chrome.tabs.remove(activeCompanionTabId).catch(() => {});
+      activeCompanionTabId = null;
+      chrome.storage.local.remove(['newtcbt_active_companion_tab_id']);
+    } else {
+      chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
+        if (tabs && tabs.length > 0) {
+          chrome.tabs.remove(tabs.map(t => t.id)).catch(() => {});
+        }
+      });
+    }
+    sendResponse({ success: true });
+    return false;
+  }
+
+  // Retry active step in a brand new chat (closes current tab, opens new tab with selected model)
+  if (request.type === 'RETRY_IN_NEW_TAB') {
+    const model = request.model || 'gemini-3.8-flash';
+    const stage = request.stage || 'sylvie';
+    const prompt = request.prompt || '';
+    let file = request.file || null;
+    const jobId = request.jobId || ('job_' + stage + '_retry_' + Date.now());
+    const oldTabId = sender.tab?.id || activeCompanionTabId;
+
+    const doCreateNewTab = (effectiveFile) => {
+      const stagePayload = {
+        newtcbt_alt_stage: stage,
+        newtcbt_alt_file: effectiveFile,
+        newtcbt_alt_prompt: prompt,
+        newtcbt_alt_job_id: jobId,
+        newtcbt_alt_timestamp: Date.now(),
+        newtcbt_alt_is_retry: true,
+        newtcbt_alt_model: model,
+        newtcbt_gem_stage: stage,
+        newtcbt_gem_prompt: prompt,
+        newtcbt_gem_job_id: jobId,
+        newtcbt_gem_timestamp: Date.now(),
+        newtcbt_gem_is_retry: true,
+        newtcbt_gem_model: model
+      };
+
+      chrome.storage.local.set(stagePayload, () => {
+        const timestamp = Date.now();
+        const targetUrl = `https://aistudio.google.com/prompts/new_chat?model=${encodeURIComponent(model)}&_s=${timestamp}#newtcbt_companion=1`;
+
+        chrome.tabs.create({
+          url: targetUrl,
+          pinned: true,
+          active: true
+        }, (newTab) => {
+          activeCompanionTabId = newTab ? newTab.id : null;
+          if (activeCompanionTabId) {
+            chrome.storage.local.set({ newtcbt_active_companion_tab_id: activeCompanionTabId });
+          }
+          if (oldTabId) {
+            chrome.tabs.remove(oldTabId).catch(() => {});
+          }
+          sendResponse({ success: true, tabId: activeCompanionTabId });
+        });
+      });
+    };
+
+    if (!file && (stage === 'dia' || stage === 'diagram' || stage === 'crop')) {
+      chrome.storage.local.get(['newtcbt_qp_file', 'newtcbt_alt_file'], (res) => {
+        const fallbackFile = res?.newtcbt_qp_file || res?.newtcbt_alt_file || null;
+        doCreateNewTab(fallbackFile);
+      });
+    } else {
+      doCreateNewTab(file);
+    }
+    return true;
   }
 
   if (request.type === 'ALT_STAGE_ERROR' || request.type === 'GEM_STAGE_ERROR') {
@@ -575,89 +713,38 @@ function queryTabForSolution(targetTabId, callback) {
 async function fetchYoutube(query) {
   try {
     const encodedQuery = encodeURIComponent(query);
+    const url = `https://www.youtube.com/results?search_query=${encodedQuery}`;
+    const response = await fetch(url);
+    const html = await response.text();
 
-    // 1. Primary: DuckDuckGo Video Search API (Fast, pure JSON, includes exact durations & all video sources)
-    try {
-      const initHtml = await fetch(`https://duckduckgo.com/?q=${encodedQuery}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-      }).then(r => r.text());
+    const ytInitDataMatch = html.match(/(?:var\s+ytInitialData|window\["ytInitialData"\]|ytInitialData)\s*=\s*(\{.*?\});/s)
+      || html.match(/var ytInitialData = (\{.*?\});/);
+    if (!ytInitDataMatch) return { error: "Failed to parse YouTube page." };
 
-      const vqdMatch = initHtml.match(/vqd=([0-9-]+)/) || initHtml.match(/vqd=['"]([0-9-]+)['"]/);
-      if (vqdMatch) {
-        const vqd = vqdMatch[1];
-        const videoApiUrl = `https://duckduckgo.com/v.js?l=us-en&o=json&q=${encodedQuery}&vqd=${vqd}&f=,,,&p=1`;
-        const data = await fetch(videoApiUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Referer': 'https://duckduckgo.com/'
-          }
-        }).then(r => r.json());
+    const ytData = JSON.parse(ytInitDataMatch[1]);
+    const contents = ytData?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents || [];
 
-        const results = data.results || [];
-        if (results.length > 0) {
-          const videos = [];
-          for (const item of results) {
-            if (videos.length >= 40) break;
-
-            const contentUrl = item.content || '';
-            const ytMatch = contentUrl.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-            const videoId = ytMatch ? ytMatch[1] : null;
-
-            let thumbnail = item.images?.large || item.images?.medium || item.images?.small || '';
-            if (videoId && (!thumbnail || thumbnail.includes('bing.net'))) {
-              thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
-            }
-
-            videos.push({
-              videoId: videoId || '',
-              title: item.title || '',
-              url: contentUrl,
-              thumbnail,
-              duration: item.duration || '',
-              author: item.uploader || item.publisher || 'Video',
-              publisher: item.publisher || (videoId ? 'YouTube' : 'Web')
-            });
-          }
-
-          if (videos.length > 0) {
-            return { videos };
-          }
-        }
+    const videos = [];
+    for (const item of contents) {
+      if (item.videoRenderer && videos.length < 20) {
+        const vr = item.videoRenderer;
+        videos.push({
+          videoId: vr.videoId,
+          title: vr.title?.runs?.[0]?.text || "",
+          url: `https://youtube.com/watch?v=${vr.videoId}`,
+          thumbnail: `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`,
+          duration: vr.lengthText?.simpleText || "",
+          author: vr.ownerText?.runs?.[0]?.text || "",
+          publisher: 'YouTube'
+        });
       }
-    } catch (e) {
-      console.warn('[NewtCBT-Utils] DDG Video API error, trying fallback:', e);
     }
 
-    // 2. Secondary fallback: Direct YouTube page scraping
-    try {
-      const ytUrl = `https://www.youtube.com/results?search_query=${encodedQuery}`;
-      const ytHtml = await fetch(ytUrl).then(r => r.text());
-      const ytInitMatch = ytHtml.match(/(?:var\s+ytInitialData|window\["ytInitialData"\]|ytInitialData)\s*=\s*(\{.*?\});/s);
-      if (ytInitMatch) {
-        const ytData = JSON.parse(ytInitMatch[1]);
-        const contents = ytData?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents?.[0]?.itemSectionRenderer?.contents || [];
-        const videos = [];
-        for (const item of contents) {
-          if (item.videoRenderer && videos.length < 30) {
-            const vr = item.videoRenderer;
-            videos.push({
-              videoId: vr.videoId,
-              title: vr.title?.runs?.[0]?.text || '',
-              url: `https://youtube.com/watch?v=${vr.videoId}`,
-              thumbnail: `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`,
-              duration: vr.lengthText?.simpleText || '',
-              author: vr.ownerText?.runs?.[0]?.text || '',
-              publisher: 'YouTube'
-            });
-          }
-        }
-        if (videos.length > 0) return { videos };
-      }
-    } catch (e) {}
+    if (videos.length === 0) {
+      return { error: 'No video results found.' };
+    }
 
-    return { error: 'No video results found.' };
+    return { videos };
   } catch (error) {
     return { error: error.message };
   }
@@ -665,13 +752,68 @@ async function fetchYoutube(query) {
 
 async function fetchWeb(query) {
   try {
-    const encodedQuery = encodeURIComponent(query);
-    const url = `https://html.duckduckgo.com/html/?q=${encodedQuery}`;
-    const response = await fetch(url);
-    const html = await response.text();
+    // 1. Remove characters that break search (\, {}, $)
+    const cleanQ = (query || '')
+      .replace(/[\\{}$]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 180);
 
-    return { html };
+    if (!cleanQ) {
+      return { error: 'Question text is empty or image-only.' };
+    }
+
+    // 2. Primary: v3.0.2 direct DuckDuckGo HTML GET (Clean GET, works natively in Firefox)
+    try {
+      const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQ)}`;
+      const response = await fetch(url);
+      const html = await response.text();
+      if (html && html.includes('result__body') && !html.includes('anomaly-modal')) {
+        return { html };
+      }
+    } catch (e) {
+      console.warn('[NewtCBT-Utils] DDG HTML GET error, trying fallback:', e);
+    }
+
+    // 3. Fallback: DuckDuckGo Lite POST
+    try {
+      const response = await fetch('https://lite.duckduckgo.com/lite/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: `q=${encodeURIComponent(cleanQ)}`
+      });
+
+      const html = await response.text();
+      if (html && (html.includes('result-link') || html.includes('result__body'))) {
+        return { html };
+      }
+    } catch (e) {
+      console.warn('[NewtCBT-Utils] DDG Lite POST error, trying fallback:', e);
+    }
+
+    // 4. Fallback: DuckDuckGo HTML POST
+    try {
+      const fallbackResponse = await fetch('https://html.duckduckgo.com/html/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: `q=${encodeURIComponent(cleanQ)}`
+      });
+
+      const fallbackHtml = await fallbackResponse.text();
+      if (fallbackHtml && !fallbackHtml.includes('anomaly-modal')) {
+        return { html: fallbackHtml };
+      }
+    } catch (e) {
+      console.warn('[NewtCBT-Utils] DDG HTML POST error:', e);
+    }
+
+    return { error: 'No web results found or search temporarily throttled.' };
   } catch (error) {
     return { error: error.message };
   }
 }
+

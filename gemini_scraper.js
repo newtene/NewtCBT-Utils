@@ -127,19 +127,138 @@
     editor.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
   }
 
-  function pasteImageIntoGeminiEditor(editor, file) {
+  function getGeminiInputArea() {
+    return (
+      document.querySelector('input-area, rich-textarea, .input-area-container, [data-test-id="input-area"]') ||
+      document.querySelector('form') ||
+      null
+    );
+  }
+
+  function hasGeminiImageAttachment() {
+    const inputArea = getGeminiInputArea();
+    if (!inputArea) return false;
+
+    // 1. Check for real blob/media images inside the input area
+    const imgs = Array.from(inputArea.querySelectorAll('img')).filter(img => {
+      const src = img.src || '';
+      const isBlob = src.startsWith('blob:') || src.startsWith('data:image/');
+      const isGoogleMedia = src.includes('googleusercontent.com') && !src.includes('avatar') && !src.includes('photo');
+      const rect = img.getBoundingClientRect();
+      return (isBlob || isGoogleMedia) && rect.width > 15 && rect.height > 15;
+    });
+    if (imgs.length > 0) return true;
+
+    // 2. Check for remove attachment button inside inputArea
+    const removeBtn = inputArea.querySelector(
+      'button[aria-label*="Remove file" i], button[aria-label*="Remove attachment" i], button[aria-label*="Remove image" i], button[aria-label*="Delete" i], [data-test-id*="remove-attachment"], [data-test-id*="remove-file"]'
+    );
+    if (removeBtn && removeBtn.getBoundingClientRect().width > 0) return true;
+
+    // 3. Check for specific file chip or preview container inside inputArea with an img
+    const previewChip = inputArea.querySelector(
+      'uploader-file-preview-container img, .uploader-file-preview img, file-chip img, thumbnail-chip img, img.gem-attachment-style-img'
+    );
+    if (previewChip && previewChip.getBoundingClientRect().width > 15) return true;
+
+    return false;
+  }
+
+  async function pasteImageIntoGeminiEditor(editor, file) {
     editor.focus();
     const dt = new DataTransfer();
     dt.items.add(file);
 
-    const pasteEvent = new ClipboardEvent('paste', {
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      clipboardData: dt
-    });
+    if (hasGeminiImageAttachment()) return true;
 
-    editor.dispatchEvent(pasteEvent);
+    // --- Format 1: Synthetic ClipboardEvent Paste (Instant in Chrome) ---
+    console.log('[GeminiScraper] Trying Format 1: ClipboardEvent Paste…');
+    try {
+      const pasteEvent = new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clipboardData: dt
+      });
+      editor.dispatchEvent(pasteEvent);
+    } catch (_) {}
+
+    await new Promise(r => setTimeout(r, 250));
+    if (hasGeminiImageAttachment()) {
+      console.log('[GeminiScraper] Format 1 (Paste) succeeded ✓');
+      editor.focus();
+      return true;
+    }
+
+    // --- Format 2: File Input Injection via '+' button (Known to work in Firefox/Zen) ---
+    console.log('[GeminiScraper] Format 1 did not attach. Trying Format 2 (File Input)…');
+    let fileInput = document.querySelector('input[type="file"], input.hidden-file-input');
+    if (!fileInput) {
+      const inputArea = getGeminiInputArea() || document;
+      const buttons = Array.from(inputArea.querySelectorAll('button, [role="button"]'));
+      const uploadBtn = buttons.find(b => {
+        const label = (b.getAttribute('aria-label') || '').toLowerCase();
+        const tooltip = (b.getAttribute('mattooltip') || '').toLowerCase();
+        const icon = (b.querySelector('mat-icon, [fonticon]')?.textContent || '').toLowerCase();
+        return (
+          label.includes('upload') ||
+          label.includes('tools') ||
+          label.includes('add') ||
+          label.includes('attach') ||
+          tooltip.includes('upload') ||
+          tooltip.includes('tools') ||
+          tooltip.includes('add') ||
+          icon.includes('add') ||
+          icon.includes('attach')
+        );
+      }) || document.querySelector(
+        'button[aria-label*="Upload and tools" i], button[aria-label*="Upload" i], button[aria-label*="Add" i], button[mattooltip*="Upload" i], [data-test-id*="upload"], button.upload-button'
+      );
+
+      if (uploadBtn) {
+        console.log('[GeminiScraper] Clicking Upload (+) button to mount file input…', uploadBtn);
+        uploadBtn.click();
+        await new Promise(r => setTimeout(r, 250));
+        fileInput = document.querySelector('input[type="file"], input.hidden-file-input');
+      }
+    }
+
+    if (fileInput) {
+      try {
+        fileInput.files = dt.files;
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+        console.log('[GeminiScraper] Injected file into Gemini fileInput ✓');
+      } catch (err) {
+        console.warn('[GeminiScraper] fileInput injection error:', err);
+      }
+    }
+
+    await new Promise(r => setTimeout(r, 350));
+    if (hasGeminiImageAttachment()) {
+      console.log('[GeminiScraper] Format 2 (File Input) succeeded ✓');
+      editor.focus();
+      return true;
+    }
+
+    // --- Format 3: Drag & Drop onto Editor & Input Area ---
+    console.log('[GeminiScraper] Format 2 did not attach. Trying Format 3 (Drag & Drop)…');
+    try {
+      const targets = [editor, editor.closest('rich-textarea'), editor.closest('input-area')].filter(Boolean);
+      ['dragenter', 'dragover', 'drop'].forEach(type => {
+        const dropEvt = new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          dataTransfer: dt
+        });
+        targets.forEach(t => t.dispatchEvent(dropEvt));
+      });
+    } catch (_) {}
+
+    await new Promise(r => setTimeout(r, 250));
+    editor.focus();
+    return hasGeminiImageAttachment();
   }
 
   async function handleGeminiSubmission(editor, text, imageBase64, isEmbedMode) {
@@ -151,23 +270,18 @@
     if (imageBase64) {
       const file = dataURLtoFile(imageBase64, 'question.png');
       if (file) {
-        pasteImageIntoGeminiEditor(editor, file);
-        console.log('[GeminiScraper] Dispatched image paste event to Gemini ✓');
+        await pasteImageIntoGeminiEditor(editor, file);
+        console.log('[GeminiScraper] Dispatched image attach to Gemini ✓');
 
         // 2. Wait for image upload / attachment preview to settle
         const startUpload = Date.now();
         const checkUpload = setInterval(() => {
-          const attachmentContainer = document.querySelector(
-            'uploader-file-preview-container, .uploader-file-preview, file-chip, thumbnail-chip, .attachment-preview, [data-test-id*="attachment"], .gem-attachment-content, input-area, rich-textarea'
-          );
-
-          const hasAttachment = document.querySelector(
-            'img.gem-attachment-style-img, img[alt="attachment"], img[src^="blob:"], img[src*="googleusercontent"], uploader-file-preview-container img, .uploader-file-preview img, file-chip img, thumbnail-chip img, .attachment-preview img, [data-test-id*="attachment"] img, [aria-label*="attachment" i], [aria-label*="image" i], img.attachment-image, .uploader-preview, [data-test-id="image-preview"]'
-          );
+          const hasAttachment = hasGeminiImageAttachment();
 
           let isLoading = false;
-          if (attachmentContainer) {
-            const spinner = attachmentContainer.querySelector(
+          const inputArea = getGeminiInputArea();
+          if (inputArea) {
+            const spinner = inputArea.querySelector(
               'svg circle, .gem-attachment-loading-container, [aria-label*="Loading image" i], mat-progress-spinner, .mat-mdc-progress-spinner, [role="progressbar"], .loading'
             );
             if (spinner && (spinner.offsetParent !== null || spinner.getBoundingClientRect().width > 0)) {

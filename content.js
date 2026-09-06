@@ -59,24 +59,83 @@ window.addEventListener('message', function(event) {
         }
 
         const parser = new DOMParser();
-        const doc = parser.parseFromString(response.html, 'text/html');
-
+        const doc = parser.parseFromString(response.html || '', 'text/html');
         const results = [];
+
+        // Helper to unwrap DDG tracking redirects to destination URLs
+        const cleanUrl = (rawUrl) => {
+          if (!rawUrl) return '';
+          try {
+            if (rawUrl.includes('uddg=')) {
+              const u = new URL(rawUrl, 'https://duckduckgo.com');
+              const uddg = u.searchParams.get('uddg');
+              if (uddg) return decodeURIComponent(uddg);
+            }
+            if (rawUrl.startsWith('//')) return 'https:' + rawUrl;
+            return rawUrl;
+          } catch (_) {
+            return rawUrl;
+          }
+        };
+
+        const getDomain = (urlStr) => {
+          try {
+            return new URL(urlStr).hostname.replace(/^www\./, '');
+          } catch (_) {
+            return '';
+          }
+        };
+
+        // 1. Primary: Standard DuckDuckGo HTML (.result__body) as in v3.0.2
         const resultElements = doc.querySelectorAll('.result__body');
+        if (resultElements && resultElements.length > 0) {
+          for (let i = 0; i < Math.min(resultElements.length, 6); i++) {
+            const el = resultElements[i];
+            const titleEl = el.querySelector('.result__title .result__a') || el.querySelector('.result__a');
+            const snippetEl = el.querySelector('.result__snippet');
+            const urlEl = el.querySelector('.result__url');
 
-        for (let i = 0; i < Math.min(resultElements.length, 5); i++) {
-          const el = resultElements[i];
-          const titleEl = el.querySelector('.result__title .result__a');
-          const snippetEl = el.querySelector('.result__snippet');
-          const urlEl = el.querySelector('.result__url');
+            const rawHref = titleEl?.getAttribute('href') || urlEl?.getAttribute('href');
+            const title = titleEl ? titleEl.textContent.trim() : '';
+            const url = cleanUrl(rawHref);
 
-          if (titleEl && urlEl) {
-            results.push({
-              title: titleEl.textContent.trim(),
-              url: urlEl.getAttribute('href'),
-              snippet: snippetEl ? snippetEl.textContent.trim() : '',
-              domain: urlEl.textContent.trim()
-            });
+            if (title && url) {
+              results.push({
+                title,
+                url,
+                snippet: snippetEl ? snippetEl.textContent.trim() : '',
+                domain: getDomain(url) || (urlEl ? urlEl.textContent.trim() : '')
+              });
+            }
+          }
+        }
+
+        // 2. Fallback: Parse DuckDuckGo Lite layout (<a class='result-link'>)
+        if (results.length === 0) {
+          const liteLinks = doc.querySelectorAll('a.result-link');
+          if (liteLinks && liteLinks.length > 0) {
+            for (let i = 0; i < Math.min(liteLinks.length, 6); i++) {
+              const linkEl = liteLinks[i];
+              const rawHref = linkEl.getAttribute('href');
+              const title = linkEl.textContent.trim();
+              const url = cleanUrl(rawHref);
+
+              let snippet = '';
+              const row = linkEl.closest('tr');
+              if (row && row.nextElementSibling) {
+                const snipEl = row.nextElementSibling.querySelector('.result-snippet');
+                if (snipEl) snippet = snipEl.textContent.trim();
+              }
+
+              if (title && url && !url.includes('duckduckgo.com/y.js')) {
+                results.push({
+                  title,
+                  url,
+                  snippet,
+                  domain: getDomain(url)
+                });
+              }
+            }
           }
         }
 
@@ -145,6 +204,10 @@ window.addEventListener('message', function(event) {
 
   if (event.data.type && event.data.type === 'NEWTCBT_FOCUS_PINNED_TAB') {
     safeSendMessage({ type: 'FOCUS_COMPANION_TAB' });
+  }
+
+  if (event.data.type && event.data.type === 'NEWTCBT_CLOSE_COMPANION_TAB') {
+    safeSendMessage({ type: 'CLOSE_COMPANION_TAB' });
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_EXTRACT_SOLN') {

@@ -48,7 +48,58 @@
     }
   }
 
-  function pasteImageToInput(inputEl, dataUrl) {
+  async function dataURLtoFileAsync(dataurl, filename = 'question.png') {
+    try {
+      const res = await fetch(dataurl);
+      const blob = await res.blob();
+      return new File([blob], filename, { type: blob.type || 'image/png', lastModified: Date.now() });
+    } catch (_) {
+      return dataURLtoFile(dataurl, filename);
+    }
+  }
+
+  function getGoogleAIInputPlate(inputEl) {
+    return (
+      inputEl?.closest('div[data-xid*="input-plate"], form, .WvcQpb, .VdsLEf, .UAbVe') ||
+      document.querySelector('div[data-xid*="input-plate"], form') ||
+      inputEl?.parentElement?.parentElement ||
+      null
+    );
+  }
+
+  function hasGoogleAIImagePreview(inputEl) {
+    const plate = getGoogleAIInputPlate(inputEl);
+    if (!plate) return false;
+
+    // 1. Check for real blob/data image thumbnails inside the input plate
+    const imgs = Array.from(plate.querySelectorAll('img')).filter(img => {
+      const src = img.src || '';
+      const isBlob = src.startsWith('blob:') || src.startsWith('data:image/');
+      const rect = img.getBoundingClientRect();
+      return isBlob && rect.width > 15 && rect.height > 15;
+    });
+    if (imgs.length > 0) return true;
+
+    // 2. Check for remove attachment button inside the input plate
+    const removeBtn = plate.querySelector(
+      'button[aria-label*="Remove" i], button[aria-label*="Delete" i], div[data-xid] button[aria-label*="Remove" i]'
+    );
+    if (removeBtn && removeBtn.getBoundingClientRect().width > 0) return true;
+
+    // 3. Check for thumbnail container with image inside the input plate
+    const thumbImg = plate.querySelector(
+      'div[data-xid*="thumbnail"] img, div[data-xid*="attachment"] img, .AypGw img, div[data-xid] img'
+    );
+    if (thumbImg && thumbImg.getBoundingClientRect().width > 15) return true;
+
+    // 4. Check for active upload circle spinner inside the input plate
+    const circle = plate.querySelector('svg circle, circle');
+    if (circle && circle.getBoundingClientRect().width > 0) return true;
+
+    return false;
+  }
+
+  async function pasteImageToInput(inputEl, dataUrl) {
     const file = dataURLtoFile(dataUrl);
     if (!file) {
       console.error('[AI Scraper] Failed to convert dataUrl to File');
@@ -56,9 +107,30 @@
     }
 
     inputEl.focus();
+    const dt = new DataTransfer();
+    dt.items.add(file);
+
+    // Format 1: Single Drag & Drop onto inputEl (attaches exactly 1 image in Firefox/Zen and Chrome)
+    console.log('[AI Scraper] Dispatching single Drag & Drop to inputEl…');
+    ['dragenter', 'dragover', 'drop'].forEach(type => {
+      inputEl.dispatchEvent(new DragEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        dataTransfer: dt
+      }));
+    });
+
+    await new Promise(r => setTimeout(r, 250));
+    const plate = getGoogleAIInputPlate(inputEl) || document;
+    if (plate.querySelector('img[src^="data:image/"], img[src^="blob:"]')) {
+      console.log('[AI Scraper] Format 1 (Drag & Drop) succeeded with 1 image ✓');
+      return true;
+    }
+
+    // Format 2: Synthetic Paste fallback
+    console.log('[AI Scraper] Drag & Drop did not attach yet. Trying Format 2: ClipboardEvent Paste…');
     try {
-      const dt = new DataTransfer();
-      dt.items.add(file);
       const pasteEvt = new ClipboardEvent('paste', {
         bubbles: true,
         cancelable: true,
@@ -66,16 +138,10 @@
         clipboardData: dt
       });
       inputEl.dispatchEvent(pasteEvt);
-      if (inputEl.parentElement) {
-        inputEl.parentElement.dispatchEvent(pasteEvt);
-      }
-      window.dispatchEvent(pasteEvt);
-      console.log('[AI Scraper] Dispatched image paste event to Google AI ✓');
-      return true;
-    } catch (e) {
-      console.error('[AI Scraper] Image paste failed:', e);
-      return false;
-    }
+    } catch (_) {}
+
+    await new Promise(r => setTimeout(r, 250));
+    return !!plate.querySelector('img[src^="data:image/"], img[src^="blob:"]');
   }
 
   let submitInterval = null;
@@ -114,45 +180,29 @@
 
   function waitForGoogleAIUpload(inputEl, imageBase64, callback) {
     const startTime = Date.now();
-    let circleSeen = false;
 
     const interval = setInterval(() => {
-      const inputPlate = inputEl.closest('div[data-xid*="input-plate"], form, .WvcQpb, .VdsLEf, .UAbVe') || inputEl.parentElement?.parentElement || document;
-      const circleEl = inputPlate.querySelector('svg circle, circle');
-      
-      const isCircleVisible = circleEl && circleEl.getBoundingClientRect().width > 0;
+      const plate = getGoogleAIInputPlate(inputEl) || document;
+      const thumbImg = plate.querySelector('img[src^="data:image/"], img[src^="blob:"]');
+      const sendBtn = plate.querySelector('button[data-xid="input-plate-send-button"], button[aria-label="Send"]');
+      const isSendEnabled = sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true';
       const elapsed = Date.now() - startTime;
 
-      if (isCircleVisible) {
-        circleSeen = true;
-      }
-
-      // Circle was seen and is now hidden/gone
-      if (circleSeen && !isCircleVisible) {
+      // When thumbnail is mounted and Send button is active/enabled (at least 350ms to settle)
+      if (thumbImg && isSendEnabled && elapsed >= 350) {
         clearInterval(interval);
-        console.log('[AI Scraper] Circle hidden! Triggering send now ✓ (elapsed:', elapsed, 'ms)');
+        console.log('[AI Scraper] Thumbnail mounted and send button ready! ✓ (elapsed:', elapsed, 'ms)');
         callback();
         return;
       }
 
-      // Thumbnail preview is mounted and no circle is visible after 600ms
-      const preview = document.querySelector(
-        'img[src^="blob:"], [aria-label*="attachment" i], [aria-label*="image" i], div[data-xid] img, .AypGw, [aria-label*="Remove" i], [data-xid*="input-plate"] img'
-      );
-      if (preview && !isCircleVisible && elapsed > 600) {
+      // Timeout fallback after 5 seconds
+      if (elapsed > 5000) {
         clearInterval(interval);
-        console.log('[AI Scraper] Upload settled & circle gone! Triggering send now ✓');
-        callback();
-        return;
-      }
-
-      // Fallback timeout after 4 seconds
-      if (elapsed > 4000) {
-        clearInterval(interval);
-        console.log('[AI Scraper] Upload wait timeout fallback! Triggering send now');
+        console.warn('[AI Scraper] Upload wait timeout fallback (5s)! Triggering send now');
         callback();
       }
-    }, 50);
+    }, 100);
   }
 
   function insertPromptText(inputEl, query) {
@@ -210,7 +260,7 @@
 
     console.log('[AI Scraper] Starting Google AI submission. Image:', !!imageBase64, 'Embed:', isEmbedMode);
 
-    submitInterval = setInterval(() => {
+    submitInterval = setInterval(async () => {
       if (querySubmitted) {
         clearInterval(submitInterval);
         submitInterval = null;
@@ -229,22 +279,77 @@
       if (imageBase64 && !imagePasted) {
         imagePasted = true;
         imageUploadInProgress = true;
-        pasteImageToInput(inputEl, imageBase64);
 
-        // Immediately insert the prompt into the textarea without waiting for upload
-        setTimeout(() => {
+        const file = (await dataURLtoFileAsync(imageBase64, 'question.png')) || dataURLtoFile(imageBase64, 'question.png');
+        if (file) {
+          const dt = new DataTransfer();
+          dt.items.add(file);
+
+          // Priority 1: Native <input type="file"> (Exact same as Gemini, verified working in Firefox & Chrome)
+          let fileInput = document.querySelector('input[type="file"]');
+          if (!fileInput) {
+            const addBtn = document.querySelector('button[aria-label*="Add" i], button[aria-label*="Upload" i], button[aria-label*="Tools" i], [data-xid*="add"], [data-xid*="upload"], div[data-xid*="input-plate"] button');
+            if (addBtn) {
+              addBtn.click();
+              await new Promise(r => setTimeout(r, 100));
+              fileInput = document.querySelector('input[type="file"]');
+            }
+          }
+
+          if (fileInput) {
+            console.log('[AI Scraper] Priority 1: Injected file into Google AI input[type="file"] ✓');
+            fileInput.files = dt.files;
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+            fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+          } else {
+            console.log('[AI Scraper] Fallback: Dispatching Drag & Drop to inputEl and plate…');
+            const plate = inputEl.closest('div[data-xid*="input-plate"], form, .WvcQpb, .VdsLEf, .UAbVe') || inputEl.parentElement;
+            ['dragenter', 'dragover', 'drop'].forEach(type => {
+              const ev = new DragEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                dataTransfer: dt
+              });
+              inputEl.dispatchEvent(ev);
+              if (plate && plate !== inputEl) plate.dispatchEvent(ev);
+            });
+          }
+
+          // 2. Insert prompt text
           insertPromptText(inputEl, query);
-        }, 60);
+          console.log('[AI Scraper] 2. Inserted prompt text ✓');
 
-        // Wait for upload circle to finish, then send immediately
-        waitForGoogleAIUpload(inputEl, imageBase64, () => {
-          imageUploadInProgress = false;
-          triggerSend(inputEl);
-        });
-      } else if (!imageBase64) {
-        insertPromptText(inputEl, query);
-        setTimeout(() => triggerSend(inputEl), 100);
+          // 3. Wait for image thumbnail and enabled Send button
+          console.log('[AI Scraper] 3. Waiting for image thumbnail and send button…');
+          let waited = 0;
+          const uploadTimer = setInterval(() => {
+            waited += 100;
+            const currentPlate = inputEl.closest('div[data-xid*="input-plate"], form, .WvcQpb, .VdsLEf, .UAbVe') || document;
+            const thumbImg = currentPlate.querySelector('img[src^="data:image/"], img[src^="blob:"]');
+            const sendBtn = currentPlate.querySelector('button[data-xid="input-plate-send-button"], button[aria-label="Send"]');
+            const isSendEnabled = sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true';
+
+            if (thumbImg && isSendEnabled && waited >= 400) {
+              clearInterval(uploadTimer);
+              console.log('[AI Scraper] 4. Image thumbnail detected and Send button ready! Clicking Send ✓ (waited:', waited, 'ms)');
+              sendBtn.click();
+              querySubmitted = true;
+              imageUploadInProgress = false;
+              chrome.storage.local.remove(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed', 'newtcbt_google_ai_timestamp']);
+            } else if (waited > 15000) {
+              clearInterval(uploadTimer);
+              console.error('[AI Scraper] Timeout waiting for image upload. ABORTING SEND to avoid sending text without image.');
+              imageUploadInProgress = false;
+            }
+          }, 100);
+          return;
+        }
       }
+
+      // Text only fallback
+      insertPromptText(inputEl, query);
+      setTimeout(() => triggerSend(inputEl), 100);
     }, 150);
   }
 

@@ -620,8 +620,8 @@
 
     // Check storage on boot
     chrome.storage.local.get(
-      ['newtcbt_alt_stage', 'newtcbt_alt_file', 'newtcbt_alt_prompt', 'newtcbt_alt_job_id', 'newtcbt_alt_timestamp',
-       'newtcbt_gem_stage', 'newtcbt_gem_file', 'newtcbt_gem_prompt', 'newtcbt_gem_job_id', 'newtcbt_gem_timestamp'],
+      ['newtcbt_alt_stage', 'newtcbt_alt_file', 'newtcbt_alt_prompt', 'newtcbt_alt_job_id', 'newtcbt_alt_timestamp', 'newtcbt_alt_is_retry',
+       'newtcbt_gem_stage', 'newtcbt_gem_file', 'newtcbt_gem_prompt', 'newtcbt_gem_job_id', 'newtcbt_gem_timestamp', 'newtcbt_gem_is_retry'],
       (res) => {
         const jobId = res.newtcbt_alt_job_id || res.newtcbt_gem_job_id;
         const timestamp = res.newtcbt_alt_timestamp || res.newtcbt_gem_timestamp;
@@ -629,7 +629,8 @@
           const stage = res.newtcbt_alt_stage || res.newtcbt_gem_stage || 'text';
           const file = res.newtcbt_alt_file || res.newtcbt_gem_file || null;
           const prompt = res.newtcbt_alt_prompt || res.newtcbt_gem_prompt || '';
-          executeAltStage(stage, file, prompt, jobId);
+          const isRetry = !!(res.newtcbt_alt_is_retry || res.newtcbt_gem_is_retry);
+          executeAltStage(stage, file, prompt, jobId, isRetry);
         }
       }
     );
