@@ -1,7 +1,28 @@
 
 (function() {
   const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('udm') !== '50' && !window.location.pathname.includes('/search')) return;
+  const isAIMode = urlParams.get('udm') === '50';
+  if (!isAIMode) return;
+
+  const isEmbed = window.self !== window.top;
+  const isNewtEmbedded = isEmbed && (
+    window.location.hash.includes('newtcbt') || 
+    (document.referrer && (document.referrer.includes('newtcbt.in') || document.referrer.includes('localhost') || document.referrer.includes('127.0.0.1')))
+  );
+  const isNewtTopTab = !isEmbed && (
+    window.location.hash.includes('newtcbt') || 
+    window.location.search.includes('_s=') || 
+    sessionStorage.getItem('newtcbt_companion_active') === 'true'
+  );
+
+  // Must be embedded in NewtCBT or launched by NewtCBT
+  if (!isNewtEmbedded && !isNewtTopTab) {
+    return;
+  }
+
+  if (isNewtTopTab) {
+    try { sessionStorage.setItem('newtcbt_companion_active', 'true'); } catch (_) {}
+  }
 
   console.log('[AI Scraper] Script loaded for Google AI Mode. URL:', window.location.href);
 
@@ -28,9 +49,11 @@
   }
 
   function pasteImageToInput(inputEl, dataUrl) {
-    if (imagePasted) return true;
     const file = dataURLtoFile(dataUrl);
-    if (!file) return false;
+    if (!file) {
+      console.error('[AI Scraper] Failed to convert dataUrl to File');
+      return false;
+    }
 
     inputEl.focus();
     try {
@@ -39,11 +62,14 @@
       const pasteEvt = new ClipboardEvent('paste', {
         bubbles: true,
         cancelable: true,
+        composed: true,
         clipboardData: dt
       });
       inputEl.dispatchEvent(pasteEvt);
-      imagePasted = true;
-      imageUploadInProgress = true;
+      if (inputEl.parentElement) {
+        inputEl.parentElement.dispatchEvent(pasteEvt);
+      }
+      window.dispatchEvent(pasteEvt);
       console.log('[AI Scraper] Dispatched image paste event to Google AI ✓');
       return true;
     } catch (e) {
@@ -52,29 +78,131 @@
     }
   }
 
-  function waitForGoogleAIUpload(callback) {
-    const startTime = Date.now();
-    const interval = setInterval(() => {
-      const hasPreview = document.querySelector('img[src^="blob:"], [aria-label*="attachment" i], [aria-label*="image" i], div[data-xid] img, .AypGw, [aria-label*="Remove" i]');
-      const spinner = document.querySelector('mat-spinner, .mat-mdc-progress-spinner, [aria-label*="Loading" i], [role="progressbar"]');
-      const isSpinning = spinner && spinner.offsetParent !== null;
-      const elapsed = Date.now() - startTime;
+  let submitInterval = null;
+  let lastSubmissionPayload = { query: '', imageBase64: '', isEmbedMode: false };
 
-      if ((hasPreview && !isSpinning) || elapsed > 8000) {
-        clearInterval(interval);
-        console.log('[AI Scraper] Google AI upload animation settled ✓');
-        callback();
+  function findActiveGoogleAIInput() {
+    const candidates = Array.from(document.querySelectorAll(
+      'textarea.ITIRGe, textarea[placeholder*="Ask anything" i], textarea[aria-label*="Ask anything" i], [data-xid*="input"] textarea, [data-xid*="input"] input, .PMoW3b textarea, textarea[role="textbox"], textarea, input[placeholder*="Ask anything" i]'
+    ));
+
+    for (const el of candidates) {
+      if (!el) continue;
+      if (el.closest('.pHpOfb, .r1PmQe, [data-scope-id="turn"]')) continue;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      if (
+        rect.width > 80 &&
+        rect.height > 15 &&
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        style.opacity !== '0'
+      ) {
+        return el;
       }
-    }, 200);
+    }
+    return null;
   }
 
-  let submitInterval = null;
+  function isInputInteractive(inputEl) {
+    if (!inputEl) return false;
+    inputEl.focus();
+    const isFocused = document.activeElement === inputEl;
+    const isDocReady = document.readyState === 'interactive' || document.readyState === 'complete';
+    return isFocused && isDocReady && !inputEl.disabled;
+  }
+
+  function waitForGoogleAIUpload(inputEl, imageBase64, callback) {
+    const startTime = Date.now();
+    let circleSeen = false;
+
+    const interval = setInterval(() => {
+      const inputPlate = inputEl.closest('div[data-xid*="input-plate"], form, .WvcQpb, .VdsLEf, .UAbVe') || inputEl.parentElement?.parentElement || document;
+      const circleEl = inputPlate.querySelector('svg circle, circle');
+      
+      const isCircleVisible = circleEl && circleEl.getBoundingClientRect().width > 0;
+      const elapsed = Date.now() - startTime;
+
+      if (isCircleVisible) {
+        circleSeen = true;
+      }
+
+      // Circle was seen and is now hidden/gone
+      if (circleSeen && !isCircleVisible) {
+        clearInterval(interval);
+        console.log('[AI Scraper] Circle hidden! Triggering send now ✓ (elapsed:', elapsed, 'ms)');
+        callback();
+        return;
+      }
+
+      // Thumbnail preview is mounted and no circle is visible after 600ms
+      const preview = document.querySelector(
+        'img[src^="blob:"], [aria-label*="attachment" i], [aria-label*="image" i], div[data-xid] img, .AypGw, [aria-label*="Remove" i], [data-xid*="input-plate"] img'
+      );
+      if (preview && !isCircleVisible && elapsed > 600) {
+        clearInterval(interval);
+        console.log('[AI Scraper] Upload settled & circle gone! Triggering send now ✓');
+        callback();
+        return;
+      }
+
+      // Fallback timeout after 4 seconds
+      if (elapsed > 4000) {
+        clearInterval(interval);
+        console.log('[AI Scraper] Upload wait timeout fallback! Triggering send now');
+        callback();
+      }
+    }, 50);
+  }
+
+  function insertPromptText(inputEl, query) {
+    console.log('[AI Scraper] Inserting prompt into Google AI input immediately…');
+    inputEl.focus();
+    const text = query || "Solve this exam question step-by-step.";
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set ||
+                         Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    if (nativeSetter) {
+      nativeSetter.call(inputEl, text);
+    } else {
+      inputEl.value = text;
+    }
+    inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function triggerSend(inputEl) {
+    console.log('[AI Scraper] Triggering Google AI send…');
+    inputEl.focus();
+
+    const sendBtn =
+      document.querySelector('button[data-xid="input-plate-send-button"]') ||
+      document.querySelector('button[aria-label="Send"]') ||
+      document.querySelector('button.OEueve') ||
+      document.querySelector('div.plllbd') ||
+      document.querySelector('.plllbd') ||
+      document.querySelector('button[aria-label*="Submit" i]');
+
+    if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true') {
+      console.log('[AI Scraper] Clicking Google AI Send button ✓');
+      sendBtn.click();
+    } else {
+      console.log('[AI Scraper] Dispatching Enter key fallback to input…');
+      inputEl.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+      }));
+    }
+
+    querySubmitted = true;
+    chrome.storage.local.remove(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed', 'newtcbt_google_ai_timestamp']);
+  }
 
   function startGoogleAISubmission(query, imageBase64, isEmbedMode) {
     if (submitInterval) {
       clearInterval(submitInterval);
       submitInterval = null;
     }
+    lastSubmissionPayload = { query, imageBase64, isEmbedMode };
     submissionStarted = true;
     querySubmitted = false;
     imagePasted = false;
@@ -89,81 +217,48 @@
         return;
       }
 
-      const textarea =
-        document.querySelector('textarea.ITIRGe') ||
-        document.querySelector('textarea[placeholder*="Ask anything" i]') ||
-        document.querySelector('textarea[role="textbox"]') ||
-        document.querySelector('textarea');
+      const inputEl = findActiveGoogleAIInput();
+      if (!inputEl) return;
 
-      if (!textarea) {
-        console.log('[AI Scraper] Waiting for Google AI textarea…');
-        return;
-      }
+      // Confirmed interactive check
+      if (!isInputInteractive(inputEl)) return;
+
+      clearInterval(submitInterval);
+      submitInterval = null;
 
       if (imageBase64 && !imagePasted) {
-        pasteImageToInput(textarea, imageBase64);
-        console.log('[AI Scraper] Waiting for image upload in Google AI…');
-        waitForGoogleAIUpload(() => {
+        imagePasted = true;
+        imageUploadInProgress = true;
+        pasteImageToInput(inputEl, imageBase64);
+
+        // Immediately insert the prompt into the textarea without waiting for upload
+        setTimeout(() => {
+          insertPromptText(inputEl, query);
+        }, 60);
+
+        // Wait for upload circle to finish, then send immediately
+        waitForGoogleAIUpload(inputEl, imageBase64, () => {
           imageUploadInProgress = false;
-          console.log('[AI Scraper] Inserting prompt into Google AI textarea…');
-          textarea.focus();
-          const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
-          if (nativeSetter) {
-            nativeSetter.call(textarea, query || "Solve this exam question step-by-step.");
-          } else {
-            textarea.value = query || "Solve this exam question step-by-step.";
-          }
-          textarea.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
-          textarea.dispatchEvent(new Event('input', { bubbles: true }));
-          textarea.dispatchEvent(new Event('change', { bubbles: true }));
-
-          setTimeout(() => {
-            const sendBtn =
-              document.querySelector('button[data-xid="input-plate-send-button"]') ||
-              document.querySelector('button[aria-label="Send"]') ||
-              document.querySelector('button.OEueve') ||
-              document.querySelector('button[aria-label*="Submit" i]');
-
-            if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true') {
-              console.log('[AI Scraper] Clicking Google AI Send button ✓');
-              sendBtn.click();
-            } else {
-              console.log('[AI Scraper] Dispatching Enter key to textarea…');
-              textarea.dispatchEvent(new KeyboardEvent('keydown', {
-                key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-              }));
-            }
-            querySubmitted = true;
-          }, 600);
+          triggerSend(inputEl);
         });
       } else if (!imageBase64) {
-        textarea.focus();
-        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
-        if (nativeSetter) {
-          nativeSetter.call(textarea, query || "Solve this exam question step-by-step.");
-        } else {
-          textarea.value = query || "Solve this exam question step-by-step.";
-        }
-        textarea.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
-        textarea.dispatchEvent(new Event('input', { bubbles: true }));
-        textarea.dispatchEvent(new Event('change', { bubbles: true }));
-
-        setTimeout(() => {
-          const sendBtn =
-            document.querySelector('button[data-xid="input-plate-send-button"]') ||
-            document.querySelector('button[aria-label="Send"]') ||
-            document.querySelector('button.OEueve');
-
-          if (sendBtn) sendBtn.click();
-          querySubmitted = true;
-        }, 500);
+        insertPromptText(inputEl, query);
+        setTimeout(() => triggerSend(inputEl), 100);
       }
-    }, 400);
+    }, 150);
   }
 
   function checkStorageAndRun() {
-    chrome.storage.local.get(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed'], function (result) {
-      const query = result.newtcbt_google_ai_query || urlParams.get('q') || '';
+    chrome.storage.local.get(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed', 'newtcbt_google_ai_timestamp'], function (result) {
+      // 60-second TTL freshness check to prevent executing abandoned/stale queries
+      const timestamp = result.newtcbt_google_ai_timestamp;
+      if (timestamp && (Date.now() - timestamp > 60000)) {
+        console.log('[AI Scraper] Discarding stale Google AI query (TTL > 60s)');
+        chrome.storage.local.remove(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed', 'newtcbt_google_ai_timestamp']);
+        return;
+      }
+
+      const query = result.newtcbt_google_ai_query || '';
       const imageBase64 = result.newtcbt_google_ai_image || null;
       const isEmbedMode = window.self !== window.top || !!result.newtcbt_google_ai_embed;
 
@@ -171,7 +266,6 @@
         return;
       }
 
-      chrome.storage.local.remove(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed']);
       startGoogleAISubmission(query, imageBase64, isEmbedMode);
     });
   }
@@ -184,7 +278,8 @@
     if (area === 'local') {
       const hasNewQuery = changes.newtcbt_google_ai_query && typeof changes.newtcbt_google_ai_query.newValue === 'string';
       const hasNewImage = changes.newtcbt_google_ai_image && typeof changes.newtcbt_google_ai_image.newValue === 'string';
-      if (hasNewQuery || hasNewImage) {
+      const hasNewTimestamp = !!changes.newtcbt_google_ai_timestamp;
+      if (hasNewQuery || hasNewImage || hasNewTimestamp) {
         submissionStarted = false;
         querySubmitted = false;
         imagePasted = false;
@@ -319,6 +414,8 @@
       document.querySelector('button[data-xid="input-plate-send-button"]') ||
       document.querySelector('button[aria-label="Send"]') ||
       document.querySelector('button.OEueve') ||
+      document.querySelector('div.plllbd') ||
+      document.querySelector('.plllbd') ||
       document.querySelector('button[aria-label*="Submit" i]');
 
     if (sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true') {
@@ -374,11 +471,42 @@
     }, 1000);
   }
 
-  // 5. Message listener from NewtCBT
+  // 5. Message listener from NewtCBT and Companion Sidebar
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'EXTRACT_SOLN_NOW') {
       handleExtractSolutionRequest(sendResponse);
       return true; // Keep message channel open for async response
+    }
+    if (msg.type === 'RETRY_SUBMISSION') {
+      console.log('[AI Scraper] Received manual RETRY_SUBMISSION request');
+      chrome.storage.local.get(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed'], function (res) {
+        const q = res.newtcbt_google_ai_query || lastSubmissionPayload.query || 'Solve this exam question step-by-step.';
+        const img = res.newtcbt_google_ai_image || lastSubmissionPayload.imageBase64 || null;
+        const isEmbed = res.newtcbt_google_ai_embed || lastSubmissionPayload.isEmbedMode || false;
+        querySubmitted = false;
+        submissionStarted = false;
+        imagePasted = false;
+        imageUploadInProgress = false;
+        startGoogleAISubmission(q, img, isEmbed);
+        sendResponse({ success: true });
+      });
+      return true;
+    }
+  });
+
+  window.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'NEWTCBT_RETRY_SUBMISSION') {
+      console.log('[AI Scraper] Received window NEWTCBT_RETRY_SUBMISSION');
+      chrome.storage.local.get(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed'], function (res) {
+        const q = res.newtcbt_google_ai_query || lastSubmissionPayload.query || 'Solve this exam question step-by-step.';
+        const img = res.newtcbt_google_ai_image || lastSubmissionPayload.imageBase64 || null;
+        const isEmbed = res.newtcbt_google_ai_embed || lastSubmissionPayload.isEmbedMode || false;
+        querySubmitted = false;
+        submissionStarted = false;
+        imagePasted = false;
+        imageUploadInProgress = false;
+        startGoogleAISubmission(q, img, isEmbed);
+      });
     }
   });
 

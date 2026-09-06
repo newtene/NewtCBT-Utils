@@ -111,16 +111,40 @@ window.addEventListener('message', function(event) {
         type: 'PREPARE_EMBED',
         query: event.data.query,
         image: event.data.image || null,
-        source: event.data.source || 'gemini'
+        source: event.data.source || 'gemini',
+        isPinned: !!event.data.isPinned
       },
       (response) => {
         window.postMessage({
           type: 'NEWTCBT_EMBED_READY',
           success: response?.success || false,
-          url: response?.url || ''
+          url: response?.url || '',
+          isPinned: !!response?.isPinned,
+          tabId: response?.tabId
         }, window.location.origin);
       }
     );
+  }
+
+  if (event.data.type && event.data.type === 'NEWTCBT_LAUNCH_PINNED_STAGE') {
+    safeSendMessage(
+      {
+        type: 'LAUNCH_PINNED_STAGE',
+        model: event.data.model || 'gemini-3.8-flash'
+      },
+      (response) => {
+        window.postMessage({
+          type: 'NEWTCBT_PINNED_STAGE_LAUNCHED',
+          success: response?.success || false,
+          tabId: response?.tabId,
+          reused: !!response?.reused
+        }, window.location.origin);
+      }
+    );
+  }
+
+  if (event.data.type && event.data.type === 'NEWTCBT_FOCUS_PINNED_TAB') {
+    safeSendMessage({ type: 'FOCUS_COMPANION_TAB' });
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_EXTRACT_SOLN') {
@@ -145,7 +169,8 @@ window.addEventListener('message', function(event) {
         file: event.data.file || null,
         prompt: event.data.prompt || '',
         jobId: event.data.jobId || ('job_' + Date.now()),
-        isRetry: !!event.data.isRetry
+        isRetry: !!event.data.isRetry,
+        model: event.data.model || 'gemini-3.8-flash'
       },
       (response) => {
         if (response && response.error) {
@@ -182,7 +207,9 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
       msg.type === 'NEWTCBT_GEM_COMPLETE' ||
       msg.type === 'NEWTCBT_ALT_COMPLETE' ||
       msg.type === 'NEWTCBT_GEM_ERROR' ||
-      msg.type === 'NEWTCBT_ALT_ERROR'
+      msg.type === 'NEWTCBT_ALT_ERROR' ||
+      msg.type === 'NEWTCBT_AI_STUDIO_MODEL_UPDATED' ||
+      msg.type === 'NEWTCBT_EXTRACTED_SOLN_RESULT'
     ) {
       window.postMessage(msg, window.location.origin);
       sendResponse && sendResponse({ relayed: true });

@@ -5,16 +5,32 @@
  */
 
 (function () {
-  // Only execute when embedded inside an iframe (e.g. NewtCBT drawer), never in standalone top-level tabs
-  if (window.self === window.top) {
-    return;
-  }
-
   if (!window.location.hostname.includes('aistudio.google.com') || !window.location.pathname.startsWith('/prompts')) {
     return;
   }
 
-  console.log('[NewtCBT:Alt] AI Studio scraper initialized in embedded drawer:', window.location.href);
+  const isEmbed = window.self !== window.top;
+  const isNewtEmbedded = isEmbed && (
+    window.location.hash.includes('newtcbt') || 
+    (document.referrer && (document.referrer.includes('newtcbt.in') || document.referrer.includes('localhost') || document.referrer.includes('127.0.0.1')))
+  );
+  const isNewtSession = !isEmbed && (
+    window.location.search.includes('_s=') || 
+    window.location.hash.includes('newtcbt') || 
+    window.name === 'newtcbt_companion_tab' ||
+    sessionStorage.getItem('newtcbt_companion_mode') === 'true'
+  );
+
+  // If not embedded in NewtCBT and not launched by NewtCBT, exit immediately
+  if (!isNewtEmbedded && !isNewtSession) {
+    return;
+  }
+
+  if (isNewtSession) {
+    try { sessionStorage.setItem('newtcbt_companion_mode', 'true'); } catch (_) {}
+  }
+
+  console.log('[NewtCBT:Alt] AI Studio scraper initialized on:', window.location.href);
 
   // ================================================================
   // 1. STATE & DEDUPLICATION
@@ -114,9 +130,15 @@
   }
 
   function findFileInput() {
+    const promptBox = document.querySelector('ms-prompt-box');
+    if (promptBox) {
+      const input = promptBox.querySelector('input[type="file"][data-test-upload-file-input], ms-add-media-button input[type="file"], input[type="file"]');
+      if (input) return input;
+    }
     return document.querySelector('input[type="file"][data-test-upload-file-input]') ||
            document.querySelector('ms-add-media-button input[type="file"]') ||
-           document.querySelector('input[type="file"].file-input');
+           document.querySelector('input[type="file"].file-input') ||
+           document.querySelector('input[type="file"]');
   }
 
   function findRunButton() {
@@ -144,7 +166,10 @@
 
 
   function checkAttachmentSettled() {
-    const chip = document.querySelector('div[data-test-id="prompt-media-container"], ms-prompt-media');
+    const promptBox = document.querySelector('ms-prompt-box');
+    const chip = promptBox 
+      ? promptBox.querySelector('div[data-test-id="prompt-media-container"], ms-prompt-media')
+      : document.querySelector('div[data-test-id="prompt-media-container"], ms-prompt-media');
     if (!chip) return false;
 
     const statusEl = chip.querySelector('ms-token-status span[data-test-id="status"], [data-test-id="status"]');

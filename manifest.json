@@ -14,6 +14,7 @@
     "declarativeNetRequestWithHostAccess",
     "tabs",
     "storage",
+    "unlimitedStorage",
     "webNavigation"
   ],
   "host_permissions": [
@@ -56,9 +57,17 @@
     },
     {
       "matches": [
+        "*://www.google.com/search*"
+      ],
+      "js": ["companion_sidebar.js"],
+      "run_at": "document_end",
+      "all_frames": false
+    },
+    {
+      "matches": [
         "*://gemini.google.com/*"
       ],
-      "js": ["gemini_scraper.js"],
+      "js": ["gemini_scraper.js", "companion_sidebar.js"],
       "run_at": "document_end",
       "all_frames": true
     },
@@ -66,12 +75,19 @@
       "matches": [
         "*://aistudio.google.com/*"
       ],
-      "js": ["alt.js"],
+      "js": ["alt.js", "companion_sidebar.js"],
       "run_at": "document_end",
       "all_frames": true
     }
   ],
   "background": {
     "service_worker": "background.js"
-  }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["logo-32.png", "logo.png"],
+      "matches": ["*://*.google.com/*", "*://aistudio.google.com/*"]
+    }
+  ]
 }
+

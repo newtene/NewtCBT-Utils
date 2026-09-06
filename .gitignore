@@ -26,3 +26,6 @@ yarn-error.log*
 
 # Ignore redundant subfolder
 NewtCBT-Utils-v1.0/
+
+# Build scripts
+build.sh

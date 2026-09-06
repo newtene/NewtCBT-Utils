@@ -7,6 +7,26 @@
     return;
   }
 
+  const isEmbed = window.self !== window.top;
+  const isNewtEmbedded = isEmbed && (
+    window.location.hash.includes('newtcbt') || 
+    (document.referrer && (document.referrer.includes('newtcbt.in') || document.referrer.includes('localhost') || document.referrer.includes('127.0.0.1')))
+  );
+  const isNewtTopTab = !isEmbed && (
+    window.location.hash.includes('newtcbt') || 
+    window.location.search.includes('_s=') || 
+    sessionStorage.getItem('newtcbt_companion_active') === 'true'
+  );
+
+  // If not embedded in NewtCBT and not launched by NewtCBT, exit immediately
+  if (!isNewtEmbedded && !isNewtTopTab) {
+    return;
+  }
+
+  if (isNewtTopTab) {
+    try { sessionStorage.setItem('newtcbt_companion_active', 'true'); } catch (_) {}
+  }
+
   console.log('[GeminiScraper] Initialized on Gemini app:', window.location.href);
 
   let querySubmitted    = false;
@@ -176,7 +196,7 @@
               } else {
                 editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
               }
-              chrome.storage.local.remove(['newtcbt_gemini_query', 'newtcbt_gemini_grounding', 'newtcbt_gemini_image', 'newtcbt_gemini_embed']);
+              chrome.storage.local.remove(['newtcbt_gemini_query', 'newtcbt_gemini_grounding', 'newtcbt_gemini_image', 'newtcbt_gemini_embed', 'newtcbt_gemini_timestamp']);
               querySubmitted = true;
             }, 300);
           }
@@ -197,7 +217,7 @@
       } else {
         editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
       }
-      chrome.storage.local.remove(['newtcbt_gemini_query', 'newtcbt_gemini_grounding', 'newtcbt_gemini_image', 'newtcbt_gemini_embed']);
+      chrome.storage.local.remove(['newtcbt_gemini_query', 'newtcbt_gemini_grounding', 'newtcbt_gemini_image', 'newtcbt_gemini_embed', 'newtcbt_gemini_timestamp']);
       querySubmitted = true;
     }, 500);
   }
@@ -290,8 +310,16 @@
   }
 
   function checkStorageAndRun() {
-    chrome.storage.local.get(['newtcbt_gemini_query', 'newtcbt_gemini_grounding', 'newtcbt_gemini_image', 'newtcbt_gemini_embed'], function (result) {
-      const query = result.newtcbt_gemini_query || new URLSearchParams(window.location.hash.substring(1)).get('q');
+    chrome.storage.local.get(['newtcbt_gemini_query', 'newtcbt_gemini_grounding', 'newtcbt_gemini_image', 'newtcbt_gemini_embed', 'newtcbt_gemini_timestamp'], function (result) {
+      // 60-second TTL freshness check to prevent executing abandoned/stale queries
+      const timestamp = result.newtcbt_gemini_timestamp;
+      if (timestamp && (Date.now() - timestamp > 60000)) {
+        console.log('[GeminiScraper] Discarding stale Gemini query (TTL > 60s)');
+        chrome.storage.local.remove(['newtcbt_gemini_query', 'newtcbt_gemini_grounding', 'newtcbt_gemini_image', 'newtcbt_gemini_embed', 'newtcbt_gemini_timestamp']);
+        return;
+      }
+
+      const query = result.newtcbt_gemini_query || '';
       const imageBase64 = result.newtcbt_gemini_image || null;
       const isEmbedMode = window.self !== window.top || !!result.newtcbt_gemini_embed;
 
@@ -311,7 +339,8 @@
     if (area === 'local') {
       const hasNewQuery = changes.newtcbt_gemini_query && typeof changes.newtcbt_gemini_query.newValue === 'string';
       const hasNewImage = changes.newtcbt_gemini_image && typeof changes.newtcbt_gemini_image.newValue === 'string';
-      if (hasNewQuery || hasNewImage) {
+      const hasNewTimestamp = !!changes.newtcbt_gemini_timestamp;
+      if (hasNewQuery || hasNewImage || hasNewTimestamp) {
         submissionStarted = false;
         querySubmitted = false;
         checkStorageAndRun();
