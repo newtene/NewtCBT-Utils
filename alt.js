@@ -520,7 +520,7 @@
     const isDiaStage = (stage === 'dia' || stage === 'diagram' || stage === 'crop');
     const targetChars = isAnswerKey ? 2500 : isDiaStage ? 4000 : 25000;
     const minLength = isAnswerKey ? 40 : isDiaStage ? 25 : 120;
-    const maxTimeoutMs = isAnswerKey ? 120000 : isDiaStage ? 180000 : 360000;
+    const maxTimeoutMs = 1200000; // 20 minutes synchronized with frontend
 
     const interval = setInterval(() => {
       const isGen = isGeneratingActive();
