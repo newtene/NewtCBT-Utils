@@ -121,8 +121,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (!chrome.runtime.lastError && existingTab) {
           activeCompanionTabId = tabId;
           chrome.storage.local.set({ newtcbt_active_companion_tab_id: tabId });
-          // Keep user on NewtCBT without stealing tab focus
-          sendResponse({ success: true, tabId, reused: true });
+          // Force navigate to a fresh new_chat session so we never resend in a poisoned chat
+          chrome.tabs.update(tabId, { url: targetUrl }, () => {
+            sendResponse({ success: true, tabId, reused: true });
+          });
           return;
         }
         findOpenAiStudioTab();
@@ -135,7 +137,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const existing = tabs[tabs.length - 1];
           activeCompanionTabId = existing.id;
           chrome.storage.local.set({ newtcbt_active_companion_tab_id: existing.id });
-          sendResponse({ success: true, tabId: existing.id, reused: true });
+          // Force navigate to a fresh new_chat session
+          chrome.tabs.update(existing.id, { url: targetUrl }, () => {
+            sendResponse({ success: true, tabId: existing.id, reused: true });
+          });
           return;
         }
         createNewWindowTab();
@@ -143,6 +148,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     };
 
     const createNewWindowTab = () => {
+      const callerWindowId = sender.tab?.windowId;
       chrome.windows.create({
         url: targetUrl,
         type: 'normal',
@@ -156,6 +162,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             newtcbt_active_companion_tab_id: activeCompanionTabId,
             newtcbt_active_companion_window_id: activeCompanionWindowId 
           });
+        }
+        // Keep the companion window in the background behind NewtCBT
+        if (request.active === false && callerWindowId) {
+          chrome.windows.update(callerWindowId, { focused: true }).catch(() => {});
         }
         sendResponse({ success: true, tabId: activeCompanionTabId, windowId: activeCompanionWindowId, reused: false });
       });
