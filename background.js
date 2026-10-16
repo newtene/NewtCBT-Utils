@@ -1,12 +1,22 @@
 
 const pendingAI = {};
 let activeCompanionTabId = null;
+let activeCompanionWindowId = null;
 let activeNewtCbtTabId = null;
 
-// Restore active tab IDs from storage on service worker boot
-chrome.storage.local.get(['newtcbt_active_companion_tab_id', 'newtcbt_active_newtcbt_tab_id'], (res) => {
+// Restore active tab and window IDs from storage on service worker boot
+chrome.storage.local.get(['newtcbt_active_companion_tab_id', 'newtcbt_active_companion_window_id', 'newtcbt_active_newtcbt_tab_id'], (res) => {
   if (res?.newtcbt_active_companion_tab_id) activeCompanionTabId = res.newtcbt_active_companion_tab_id;
+  if (res?.newtcbt_active_companion_window_id) activeCompanionWindowId = res.newtcbt_active_companion_window_id;
   if (res?.newtcbt_active_newtcbt_tab_id) activeNewtCbtTabId = res.newtcbt_active_newtcbt_tab_id;
+});
+
+chrome.windows.onRemoved.addListener((closedWinId) => {
+  if (activeCompanionWindowId === closedWinId) {
+    activeCompanionWindowId = null;
+    activeCompanionTabId = null;
+    chrome.storage.local.remove(['newtcbt_active_companion_tab_id', 'newtcbt_active_companion_window_id']);
+  }
 });
 
 chrome.tabs.onRemoved.addListener((closedTabId) => {
@@ -128,21 +138,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           sendResponse({ success: true, tabId: existing.id, reused: true });
           return;
         }
-        createNewPinnedTab();
+        createNewWindowTab();
       });
     };
 
-    const createNewPinnedTab = () => {
-      chrome.tabs.create({
+    const createNewWindowTab = () => {
+      chrome.windows.create({
         url: targetUrl,
-        pinned: true,
-        active: request.active !== false
-      }, (newTab) => {
+        type: 'normal',
+        focused: request.active !== false
+      }, (newWindow) => {
+        const newTab = newWindow?.tabs ? newWindow.tabs[0] : null;
         activeCompanionTabId = newTab ? newTab.id : null;
+        activeCompanionWindowId = newWindow ? newWindow.id : null;
         if (activeCompanionTabId) {
-          chrome.storage.local.set({ newtcbt_active_companion_tab_id: activeCompanionTabId });
+          chrome.storage.local.set({ 
+            newtcbt_active_companion_tab_id: activeCompanionTabId,
+            newtcbt_active_companion_window_id: activeCompanionWindowId 
+          });
         }
-        sendResponse({ success: true, tabId: activeCompanionTabId, reused: false });
+        sendResponse({ success: true, tabId: activeCompanionTabId, windowId: activeCompanionWindowId, reused: false });
       });
     };
 
@@ -277,9 +292,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       };
 
       const createNewTab = () => {
-        chrome.tabs.create({ url: targetUrl, pinned: true, active: true }, (tab) => {
+        chrome.tabs.create({ url: targetUrl, pinned: false, active: true }, (tab) => {
           activeCompanionTabId = tab ? tab.id : null;
-          sendResponse({ success: true, url: targetUrl, tabId: tab?.id, isPinned: true, reused: false });
+          sendResponse({ success: true, url: targetUrl, tabId: tab?.id, isPinned: false, reused: false });
         });
       };
 
@@ -525,10 +540,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.returnFocus !== false && activeNewtCbtTabId) {
       chrome.tabs.update(activeNewtCbtTabId, { active: true }).catch(() => {});
     }
+    if (activeCompanionWindowId) {
+      chrome.windows.remove(activeCompanionWindowId).catch(() => {});
+      activeCompanionWindowId = null;
+    }
     if (activeCompanionTabId) {
       chrome.tabs.remove(activeCompanionTabId).catch(() => {});
       activeCompanionTabId = null;
-      chrome.storage.local.remove(['newtcbt_active_companion_tab_id']);
+      chrome.storage.local.remove(['newtcbt_active_companion_tab_id', 'newtcbt_active_companion_window_id']);
     } else {
       chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
         if (tabs && tabs.length > 0) {
@@ -570,19 +589,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const timestamp = Date.now();
         const targetUrl = `https://aistudio.google.com/prompts/new_chat?model=${encodeURIComponent(model)}&_s=${timestamp}#newtcbt_companion=1`;
 
-        chrome.tabs.create({
+        chrome.windows.create({
           url: targetUrl,
-          pinned: true,
-          active: false
-        }, (newTab) => {
+          type: 'normal',
+          focused: false
+        }, (newWindow) => {
+          const newTab = newWindow?.tabs ? newWindow.tabs[0] : null;
           activeCompanionTabId = newTab ? newTab.id : null;
+          activeCompanionWindowId = newWindow ? newWindow.id : null;
           if (oldTabId) {
             chrome.tabs.remove(oldTabId).catch(() => {});
           }
           if (activeCompanionTabId) {
-            chrome.storage.local.set({ newtcbt_active_companion_tab_id: activeCompanionTabId });
+            chrome.storage.local.set({ 
+              newtcbt_active_companion_tab_id: activeCompanionTabId,
+              newtcbt_active_companion_window_id: activeCompanionWindowId 
+            });
           }
-          sendResponse({ success: true, tabId: activeCompanionTabId });
+          sendResponse({ success: true, tabId: activeCompanionTabId, windowId: activeCompanionWindowId });
         });
       });
     };
