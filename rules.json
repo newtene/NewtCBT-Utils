@@ -17,7 +17,7 @@
     },
     "condition": {
       "urlFilter": "||gemini.google.com*",
-      "resourceTypes": ["sub_frame"]
+      "resourceTypes": ["main_frame", "sub_frame"]
     }
   },
   {
@@ -38,7 +38,7 @@
     },
     "condition": {
       "urlFilter": "||aistudio.google.com*",
-      "resourceTypes": ["sub_frame"]
+      "resourceTypes": ["main_frame", "sub_frame"]
     }
   },
   {
@@ -59,7 +59,7 @@
     },
     "condition": {
       "urlFilter": "||www.google.com/search*",
-      "resourceTypes": ["sub_frame"]
+      "resourceTypes": ["main_frame", "sub_frame"]
     }
   }
 ]

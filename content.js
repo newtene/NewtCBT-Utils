@@ -189,7 +189,8 @@ window.addEventListener('message', function(event) {
     safeSendMessage(
       {
         type: 'LAUNCH_PINNED_STAGE',
-        model: event.data.model || 'gemini-3.8-flash'
+        model: event.data.model || 'gemini-3.8-flash',
+        active: event.data.active !== false
       },
       (response) => {
         window.postMessage({
@@ -207,7 +208,10 @@ window.addEventListener('message', function(event) {
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_CLOSE_COMPANION_TAB') {
-    safeSendMessage({ type: 'CLOSE_COMPANION_TAB' });
+    safeSendMessage({
+      type: 'CLOSE_COMPANION_TAB',
+      returnFocus: event.data.returnFocus !== false
+    });
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_EXTRACT_SOLN') {

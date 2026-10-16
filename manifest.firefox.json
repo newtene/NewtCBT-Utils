@@ -81,6 +81,15 @@
       "matches": [
         "*://aistudio.google.com/*"
       ],
+      "js": ["aistudio_fix.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "*://aistudio.google.com/*"
+      ],
       "js": ["alt.js", "companion_sidebar.js"],
       "run_at": "document_end",
       "all_frames": true

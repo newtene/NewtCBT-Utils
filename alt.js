@@ -30,6 +30,19 @@
     try { sessionStorage.setItem('newtcbt_companion_mode', 'true'); } catch (_) {}
   }
 
+  // Start an ISOLATED world Web Worker ticker (exempt from page Trusted Types) to pump aistudio_fix.js
+  try {
+    const tickBlob = new Blob(['setInterval(() => postMessage(0), 45);'], { type: 'application/javascript' });
+    const tickWorker = new Worker(URL.createObjectURL(tickBlob));
+    tickWorker.onmessage = () => {
+      window.dispatchEvent(new CustomEvent('__newtcbt_raf_tick'));
+    };
+  } catch (_) {
+    setInterval(() => {
+      window.dispatchEvent(new CustomEvent('__newtcbt_raf_tick'));
+    }, 50);
+  }
+
   console.log('[NewtCBT:Alt] AI Studio scraper initialized on:', window.location.href);
 
   // ================================================================
@@ -41,6 +54,24 @@
   let currentStage = null;
   let activeObserverInterval = null;
   const processedJobIds = new Set();
+
+  // Direct network stream state (received from aistudio_fix.js XHR/Fetch hook)
+  let latestStreamText = '';
+  let streamIsDone = false;
+  let streamError = null;
+
+  window.addEventListener('__newtcbt_api_stream', (e) => {
+    const detail = e.detail || {};
+    if (typeof detail.text === 'string' && detail.text.length > 0) {
+      latestStreamText = detail.text;
+    }
+    if (detail.done) {
+      if (latestStreamText.length > 0 || detail.error) {
+        streamIsDone = true;
+      }
+      if (detail.error) streamError = detail.error;
+    }
+  });
 
   function dataURLtoFile(dataurl, filename = 'document.pdf', mimeType = null) {
     try {
@@ -155,7 +186,7 @@
   function isGeneratingActive() {
     const btn = findRunButton();
     if (btn) {
-      const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+      const text = (btn.textContent || btn.innerText || '').trim().toLowerCase();
       const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
       if (text.includes('stop') || ariaLabel.includes('stop') || btn.querySelector('.spin, [mattooltip*="Stop" i]')) {
         return true;
@@ -172,11 +203,15 @@
       : document.querySelector('div[data-test-id="prompt-media-container"], ms-prompt-media');
     if (!chip) return false;
 
-    const statusEl = chip.querySelector('ms-token-status span[data-test-id="status"], [data-test-id="status"]');
-    const statusText = (statusEl?.innerText || '').trim().toLowerCase();
+    // Check for active loading spinner
+    const spinner = chip.querySelector('mat-spinner, mat-progress-spinner, .loading, [data-test-id="spinner"], .spin');
+    if (spinner) return false;
 
-    // While uploading, AI Studio displays "Loading..."
-    if (statusText.includes('loading')) {
+    const statusEl = chip.querySelector('ms-token-status span[data-test-id="status"], [data-test-id="status"]');
+    const statusText = (statusEl?.textContent || statusEl?.innerText || '').trim().toLowerCase();
+
+    // While uploading, AI Studio displays "Loading..." or "Uploading..."
+    if (statusText.includes('loading') || statusText.includes('uploading')) {
       return false;
     }
 
@@ -230,8 +265,13 @@
 
   function setPromptValue(textarea, text) {
     textarea.focus();
-    textarea.value = text;
-    // Dispatch Angular reactive form events
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+    if (nativeSetter) {
+      nativeSetter.call(textarea, text);
+    } else {
+      textarea.value = text;
+    }
+    textarea.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, composed: true }));
     textarea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
     textarea.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
   }
@@ -268,7 +308,7 @@
           const codeEl = block.querySelector('pre code') || block.querySelector('code');
           if (!codeEl) continue;
 
-          let text = (codeEl.innerText || codeEl.textContent || '').trim();
+          let text = (codeEl.textContent || codeEl.innerText || '').trim();
           text = text.replace(/^```(?:markdown|json|text)?\s*\n?/i, '').replace(/\n?```\s*$/, '').trim();
           text = text.replace(/^(?:code\s*\n\s*)?(?:Markdown|JSON|Text)\s*\n\s*download\s*\n\s*content_copy\s*\n\s*(?:expand_less|expand_more)\s*\n?/i, '').trim();
 
@@ -284,7 +324,7 @@
       // 2. Fallback: CommonMark node container inside turn
       const cmarkEl = turn.querySelector('ms-cmark-node');
       if (cmarkEl) {
-        let rawText = (cmarkEl.innerText || cmarkEl.textContent || '').trim();
+        let rawText = (cmarkEl.textContent || cmarkEl.innerText || '').trim();
         rawText = rawText.replace(/^```(?:markdown|json|text)?\s*\n?/i, '').replace(/\n?```\s*$/, '').trim();
         if (rawText.length > 20) {
           return rawText;
@@ -422,17 +462,17 @@
       }, 300);
 
       // Wait for settlement
-      await awaitUploadSettlementAndRun(stage, textarea, currentJobId, initialModelTurns);
+      await awaitUploadSettlementAndRun(stage, textarea, currentJobId, initialModelTurns, finalPrompt);
     } else {
       // Text-only turn
       setPromptValue(textarea, finalPrompt);
-      await triggerRunAndObserve(stage, currentJobId, initialModelTurns);
+      await triggerRunAndObserve(stage, currentJobId, initialModelTurns, textarea);
     }
   }
 
-  async function awaitUploadSettlementAndRun(stage, textarea, jobId, initialModelTurns = 0) {
+  async function awaitUploadSettlementAndRun(stage, textarea, jobId, initialModelTurns = 0, expectedPrompt = '') {
     const startTime = Date.now();
-    const timeoutMs = 60000;
+    const timeoutMs = 120000; // 2 minutes for large multi-page PDFs
     let stableTicks = 0;
     let hasSent = false;
 
@@ -449,17 +489,22 @@
       const runBtn = findRunButton();
       const isReady = runBtn && !isRunButtonDisabled(runBtn);
 
+      // Keep prompt populated if Angular wiped it during attachment initialization
+      if (expectedPrompt && textarea && (!textarea.value || textarea.value.length < 10)) {
+        setPromptValue(textarea, expectedPrompt);
+      }
+
       const progress = Math.min(30, Math.floor(15 + (elapsed / timeoutMs) * 15));
       notifyAltProgress(stage, isSettled ? 'ready' : 'uploading', 0, progress, jobId);
 
-      // Verified ready: settled chip + enabled Run button + at least 1.5s elapsed
-      if (elapsed >= 1500 && isSettled && isReady) {
+      // Click ONLY when actually ready (Run button is fully enabled and attachment is settled)
+      if (isSettled && isReady) {
         stableTicks++;
-        if (stableTicks >= 2) {
+        if (stableTicks >= 2) { // Stable for 500ms
           hasSent = true;
           clearInterval(interval);
           console.log(`[NewtCBT:Alt] Attachment settled and Run button enabled in ${elapsed}ms ✓`);
-          clickRunAndObserve(stage, runBtn, jobId, initialModelTurns);
+          clickRunAndObserve(stage, runBtn, jobId, initialModelTurns, textarea);
           return;
         }
       } else {
@@ -470,19 +515,46 @@
         if (!hasSent) {
           hasSent = true;
           clearInterval(interval);
-          console.warn('[NewtCBT:Alt] Settlement timed out, attempting Run click anyway...');
+          console.warn('[NewtCBT:Alt] Settlement reached timeout, attempting Run click...');
           const btn = findRunButton();
-          if (btn) clickRunAndObserve(stage, btn, jobId, initialModelTurns);
+          if (btn) clickRunAndObserve(stage, btn, jobId, initialModelTurns, textarea);
           else notifyAltError(stage, 'Run button not found after settlement timeout.', jobId);
         }
       }
     }, 250);
   }
 
-  function clickRunAndObserve(stage, runBtn, jobId, initialModelTurns = 0) {
+  function clickRunAndObserve(stage, runBtn, jobId, initialModelTurns = 0, textarea = null) {
     notifyAltProgress(stage, 'submitting', 0, 35, jobId);
-    console.log('[NewtCBT:Alt] Clicking Run button ✓');
+    console.log('[NewtCBT:Alt] Dispatching Run button click events ✓');
+
+    try {
+      runBtn.focus();
+      runBtn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
+      runBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      runBtn.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
+      runBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    } catch (_) {}
     runBtn.click();
+
+    // Safety net for background tabs: if Angular didn't register click after 700ms, dispatch Ctrl+Enter on textarea
+    setTimeout(() => {
+      if (!isGeneratingActive() && !latestStreamText && textarea) {
+        console.log('[NewtCBT:Alt] Generation not detected after click; firing Ctrl+Enter backup on textarea...');
+        try {
+          textarea.focus();
+          textarea.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          }));
+        } catch (_) {}
+      }
+    }, 700);
 
     const minModelTurns = initialModelTurns + 1;
     setTimeout(() => {
@@ -490,18 +562,81 @@
     }, 800);
   }
 
-  async function triggerRunAndObserve(stage, jobId, initialModelTurns = 0) {
-    await new Promise(r => setTimeout(r, 400));
-    const runBtn = findRunButton();
-    if (runBtn && !isRunButtonDisabled(runBtn)) {
-      clickRunAndObserve(stage, runBtn, jobId, initialModelTurns);
-    } else {
-      setTimeout(() => {
+  async function triggerRunAndObserve(stage, jobId, initialModelTurns = 0, textarea = null) {
+    const startTime = Date.now();
+    const timeoutMs = 30000;
+    const interval = setInterval(() => {
+      const runBtn = findRunButton();
+      if (runBtn && !isRunButtonDisabled(runBtn)) {
+        clearInterval(interval);
+        clickRunAndObserve(stage, runBtn, jobId, initialModelTurns, textarea);
+        return;
+      }
+      if (Date.now() - startTime > timeoutMs) {
+        clearInterval(interval);
         const btn = findRunButton();
-        if (btn) clickRunAndObserve(stage, btn, jobId, initialModelTurns);
+        if (btn) clickRunAndObserve(stage, btn, jobId, initialModelTurns, textarea);
         else notifyAltError(stage, 'Could not trigger Run button.', jobId);
-      }, 800);
+      }
+    }, 250);
+  }
+
+  function cleanAiStudioPayload(rawText) {
+    if (!rawText || typeof rawText !== 'string') return '';
+    let text = rawText.trim();
+
+    // 1. Extract content from all closed code blocks (markdown / json / text)
+    // Strips all leading/trailing/interleaved thoughts from models with thinking enabled
+    const codeBlockRegex = /```(?:markdown|json|text)?\s*([\s\S]*?)```/gi;
+    const blocks = [];
+    let match;
+    let lastEnd = 0;
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+      const code = match[1].trim();
+      if (code.length > 10) {
+        blocks.push(code);
+      }
+      lastEnd = match.index + match[0].length;
     }
+
+    // 2. Check for unclosed code block after last closed block (streaming in progress)
+    const remaining = text.slice(lastEnd);
+    const unclosedMatch = remaining.match(/```(?:markdown|json|text)?\s*([\s\S]+)$/i);
+    if (unclosedMatch && unclosedMatch[1].trim().length > 10) {
+      blocks.push(unclosedMatch[1].trim());
+    }
+
+    if (blocks.length > 0) {
+      return blocks.join('\n\n');
+    }
+
+    // 3. Fallback if model output raw text without code fences:
+    // ONLY match if it contains verified exam structure (never conversational thinking)
+    const secIdx = text.search(/^#{1,3}\s+[A-Za-z]/m);
+    if (secIdx >= 0) {
+      return text.slice(secIdx).trim();
+    }
+
+    const qWithOptsIdx = text.search(/^[1-9]\d{0,2}[\.\)]\s+[\s\S]*?(?:\n\[OPTIONS\]|\n[A-D]\)|\n\([A-D]\)|\[CH:|\[DIAGRAM)/im);
+    if (qWithOptsIdx >= 0) {
+      return text.slice(qWithOptsIdx).trim();
+    }
+
+    // Answer key fallback: e.g. "1. A" or "1: (B)" or "Q1. A"
+    const ansIdx = text.search(/(?:^|\n)(?:Q\.?\s*\d+|\d{1,3}[\.\:\)])\s*[\(\[]?([A-D1-4])[\)\]]?(?:\s*$|\s+(?=[^a-z]|$))/im);
+    if (ansIdx >= 0) {
+      return text.slice(ansIdx).trim();
+    }
+
+    // JSON array fallback for diagram stage: e.g. [ { "questionNumber": 1 ...
+    const jsonArrIdx = text.search(/^\s*\[\s*\{\s*"/m);
+    if (jsonArrIdx >= 0) {
+      return text.slice(jsonArrIdx).trim();
+    }
+
+    // If there are NO code blocks and NO verified exam structures,
+    // the text is pure reasoning/thinking tokens! Return empty string.
+    return '';
   }
 
   function observeAiStudioStreaming(stage, jobId, minModelTurnCount = 0) {
@@ -512,9 +647,16 @@
       activeObserverInterval = null;
     }
 
+    // Reset direct network stream state for this stage
+    latestStreamText = '';
+    streamIsDone = false;
+    streamError = null;
+
     const startTime = Date.now();
-    let stableTicks = 0;
-    let lastLength = 0;
+    let domStableTicks = 0;
+    let streamStableTicks = 0;
+    let lastDomLen = 0;
+    let lastStreamLen = 0;
     let everGenerating = false;
     const isAnswerKey = (stage === 'sylvie' || stage === 'ans' || stage === 'key');
     const isDiaStage = (stage === 'dia' || stage === 'diagram' || stage === 'crop');
@@ -523,13 +665,24 @@
     const maxTimeoutMs = 1200000; // 20 minutes synchronized with frontend
 
     const interval = setInterval(() => {
-      const isGen = isGeneratingActive();
-      if (isGen) {
+      const isDomGen = isGeneratingActive();
+      const domPayload = extractAiStudioMarkdown(minModelTurnCount) || '';
+
+      // Clean thought tokens from both direct network stream and DOM
+      const cleanStreamPayload = cleanAiStudioPayload(latestStreamText);
+      const cleanDomPayload = cleanAiStudioPayload(domPayload);
+
+      const hasStreamData = cleanStreamPayload && cleanStreamPayload.length >= minLength;
+      const hasDomData = cleanDomPayload && cleanDomPayload.length >= minLength;
+
+      const rawPayload = (cleanStreamPayload && cleanStreamPayload.length >= cleanDomPayload.length)
+        ? cleanStreamPayload
+        : cleanDomPayload;
+      const curLen = rawPayload.length;
+
+      if (isDomGen || (latestStreamText && latestStreamText.length > 0)) {
         everGenerating = true;
       }
-
-      const rawPayload = extractAiStudioMarkdown(minModelTurnCount) || '';
-      const curLen = rawPayload.length;
 
       // Progress computation
       if (curLen > 0) {
@@ -537,29 +690,87 @@
         notifyAltProgress(stage, 'streaming', curLen, pct, jobId);
       }
 
-      // Completion detection:
-      // Once generation has run (or stopped) and length is sufficient
-      if (everGenerating || curLen >= minLength) {
-        if (!isGen && curLen >= minLength) {
-          if (curLen === lastLength) {
-            stableTicks++;
-            if (stableTicks >= 3) { // Stable for 1.5 seconds after generation ends
-              clearInterval(interval);
-              activeObserverInterval = null;
-              console.log(`[NewtCBT:Alt] Extraction complete for ${stage} (${curLen} chars) ✓`);
-              notifyAltProgress(stage, 'complete', curLen, 100, jobId);
-              notifyAltComplete(stage, rawPayload, jobId, true);
-              altProcessing = false;
-              return;
-            }
-          } else {
-            stableTicks = 0;
-            lastLength = curLen;
+      // Check stream error
+      if (streamError && !curLen) {
+        clearInterval(interval);
+        activeObserverInterval = null;
+        console.error(`[NewtCBT:Alt] Network stream error for ${stage}:`, streamError);
+        notifyAltError(stage, `Network error from AI Studio: ${streamError}`, jobId);
+        altProcessing = false;
+        return;
+      }
+
+      // Check DOM error indicators (e.g. snackbars, alert banners, turn error icons)
+      const snackbar = document.querySelector('mat-snack-bar-container, .mat-mdc-snack-bar-container, [role="alert"]');
+      const snackbarText = (snackbar?.textContent || '').trim();
+      const lastTurn = document.querySelector('ms-chat-turn:last-of-type');
+      const lastTurnText = (lastTurn?.textContent || '').toLowerCase();
+      const hasTurnErrorIcon = !!document.querySelector('ms-chat-turn mat-icon.error, ms-chat-turn [data-test-id*="error"]');
+
+      const isDomError = (snackbarText && /internal error|permission|overloaded|please try again|quota exceeded/i.test(snackbarText)) ||
+                         (lastTurnText && /an internal error has occurred|caller does not have permission|model is overloaded/i.test(lastTurnText)) ||
+                         (hasTurnErrorIcon && !isDomGen && !curLen);
+
+      if (isDomError && !curLen) {
+        clearInterval(interval);
+        activeObserverInterval = null;
+        const errMsg = snackbarText || 'AI Studio Error: Internal error encountered';
+        console.error(`[NewtCBT:Alt] DOM error detected for ${stage}:`, errMsg);
+        notifyAltError(stage, errMsg, jobId);
+        altProcessing = false;
+        return;
+      }
+
+      // ─── PATH 1: DIRECT NETWORK STREAM COMPLETION (BACKGROUND TAB FAST-PATH) ───
+      // If network stream provided substantial content:
+      if (hasStreamData) {
+        if (cleanStreamPayload.length === lastStreamLen) {
+          streamStableTicks++;
+        } else {
+          streamStableTicks = 0;
+          lastStreamLen = cleanStreamPayload.length;
+        }
+
+        // Completion requirements:
+        // 1. MUST NOT cut off while AI Studio is actively generating (Stop button is visible)
+        // 2. Either the HTTP stream finished (streamIsDone) OR generation ended (!isDomGen) and payload has been stable
+        const isNetworkComplete = streamIsDone && (!isDomGen || streamStableTicks >= 2);
+        const isSettledAfterStop = !isDomGen && streamStableTicks >= 8; // 4s stable AFTER Stop button disappears
+
+        if (isNetworkComplete || isSettledAfterStop) {
+          clearInterval(interval);
+          activeObserverInterval = null;
+          console.log(`[NewtCBT:Alt] Direct network stream complete for ${stage} (${cleanStreamPayload.length} chars, streamIsDone: ${streamIsDone}) ✓`);
+          notifyAltProgress(stage, 'complete', cleanStreamPayload.length, 100, jobId);
+          notifyAltComplete(stage, cleanStreamPayload, jobId, true);
+          altProcessing = false;
+          return;
+        }
+      }
+
+      // ─── PATH 2: DOM COMPLETION (FALLBACK IF STREAM INTERCEPTOR HAD NO DATA) ───
+      // ONLY used if network stream did NOT produce content.
+      // Must wait until DOM generation spinner/Stop button is completely gone (!isDomGen)
+      // AND text length has remained completely stable for 2 seconds (4 ticks).
+      if (!hasStreamData && hasDomData && !isDomGen) {
+        if (cleanDomPayload.length === lastDomLen) {
+          domStableTicks++;
+          if (domStableTicks >= 4) { // Stable for 2 seconds after generation ends
+            clearInterval(interval);
+            activeObserverInterval = null;
+            console.log(`[NewtCBT:Alt] DOM Extraction complete for ${stage} (${cleanDomPayload.length} chars) ✓`);
+            notifyAltProgress(stage, 'complete', cleanDomPayload.length, 100, jobId);
+            notifyAltComplete(stage, cleanDomPayload, jobId, true);
+            altProcessing = false;
+            return;
           }
         } else {
-          stableTicks = 0;
-          lastLength = curLen;
+          domStableTicks = 0;
+          lastDomLen = cleanDomPayload.length;
         }
+      } else {
+        domStableTicks = 0;
+        lastDomLen = cleanDomPayload.length;
       }
 
       // Safeguard timeout

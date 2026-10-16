@@ -111,9 +111,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (!chrome.runtime.lastError && existingTab) {
           activeCompanionTabId = tabId;
           chrome.storage.local.set({ newtcbt_active_companion_tab_id: tabId });
-          chrome.tabs.update(tabId, { active: true }, () => {
-            sendResponse({ success: true, tabId, reused: true });
-          });
+          // Keep user on NewtCBT without stealing tab focus
+          sendResponse({ success: true, tabId, reused: true });
           return;
         }
         findOpenAiStudioTab();
@@ -126,9 +125,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           const existing = tabs[tabs.length - 1];
           activeCompanionTabId = existing.id;
           chrome.storage.local.set({ newtcbt_active_companion_tab_id: existing.id });
-          chrome.tabs.update(existing.id, { active: true }, () => {
-            sendResponse({ success: true, tabId: existing.id, reused: true });
-          });
+          sendResponse({ success: true, tabId: existing.id, reused: true });
           return;
         }
         createNewPinnedTab();
@@ -139,7 +136,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       chrome.tabs.create({
         url: targetUrl,
         pinned: true,
-        active: true
+        active: request.active !== false
       }, (newTab) => {
         activeCompanionTabId = newTab ? newTab.id : null;
         if (activeCompanionTabId) {
@@ -525,7 +522,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // Explicitly close companion tab from NewtCBT
   if (request.type === 'CLOSE_COMPANION_TAB') {
-    if (activeNewtCbtTabId) {
+    if (request.returnFocus !== false && activeNewtCbtTabId) {
       chrome.tabs.update(activeNewtCbtTabId, { active: true }).catch(() => {});
     }
     if (activeCompanionTabId) {
@@ -576,14 +573,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.tabs.create({
           url: targetUrl,
           pinned: true,
-          active: true
+          active: false
         }, (newTab) => {
           activeCompanionTabId = newTab ? newTab.id : null;
-          if (activeCompanionTabId) {
-            chrome.storage.local.set({ newtcbt_active_companion_tab_id: activeCompanionTabId });
-          }
           if (oldTabId) {
             chrome.tabs.remove(oldTabId).catch(() => {});
+          }
+          if (activeCompanionTabId) {
+            chrome.storage.local.set({ newtcbt_active_companion_tab_id: activeCompanionTabId });
           }
           sendResponse({ success: true, tabId: activeCompanionTabId });
         });
