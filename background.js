@@ -115,13 +115,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const model = request.model || 'gemini-3.8-flash';
     const timestamp = Date.now();
     const targetUrl = `https://aistudio.google.com/prompts/new_chat?model=${encodeURIComponent(model)}&_s=${timestamp}#newtcbt_companion=1`;
-
     const checkAndReuse = (tabId) => {
       chrome.tabs.get(tabId, (existingTab) => {
         if (!chrome.runtime.lastError && existingTab) {
           activeCompanionTabId = tabId;
           chrome.storage.local.set({ newtcbt_active_companion_tab_id: tabId });
-          // Force navigate to a fresh new_chat session so we never resend in a poisoned chat
+          // Force navigate to a fresh new_chat session so each stage is 100% clean and isolated
           chrome.tabs.update(tabId, { url: targetUrl }, () => {
             sendResponse({ success: true, tabId, reused: true });
           });

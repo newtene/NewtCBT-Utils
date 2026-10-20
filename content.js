@@ -190,7 +190,8 @@ window.addEventListener('message', function(event) {
       {
         type: 'LAUNCH_PINNED_STAGE',
         model: event.data.model || 'gemini-3.8-flash',
-        active: event.data.active !== false
+        active: event.data.active !== false,
+        forceNewChat: !!event.data.forceNewChat
       },
       (response) => {
         window.postMessage({
