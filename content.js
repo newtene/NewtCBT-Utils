@@ -171,14 +171,17 @@ window.addEventListener('message', function(event) {
         query: event.data.query,
         image: event.data.image || null,
         source: event.data.source || 'gemini',
-        isPinned: !!event.data.isPinned
+        isPinned: !!event.data.isPinned,
+        companionMode: event.data.companionMode || (event.data.isPinned ? 'pinned' : 'sidepanel')
       },
       (response) => {
         window.postMessage({
           type: 'NEWTCBT_EMBED_READY',
           success: response?.success || false,
           url: response?.url || '',
+          source: event.data.source || 'gemini',
           isPinned: !!response?.isPinned,
+          sidePanel: !!response?.sidePanel,
           tabId: response?.tabId
         }, window.location.origin);
       }
@@ -206,8 +209,24 @@ window.addEventListener('message', function(event) {
     );
   }
 
-  if (event.data.type && event.data.type === 'NEWTCBT_FOCUS_PINNED_TAB') {
-    safeSendMessage({ type: 'FOCUS_COMPANION_TAB' });
+  if (event.data.type && (event.data.type === 'NEWTCBT_FOCUS_PINNED_TAB' || event.data.type === 'NEWTCBT_OPEN_SIDEPANEL')) {
+    safeSendMessage(
+      {
+        type: 'FOCUS_COMPANION_TAB',
+        companionMode: event.data.companionMode || (event.data.type === 'NEWTCBT_OPEN_SIDEPANEL' ? 'sidepanel' : undefined),
+        mode: event.data.mode
+      },
+      (response) => {
+        if (event.data.type === 'NEWTCBT_OPEN_SIDEPANEL') {
+          window.postMessage({
+            type: 'NEWTCBT_SIDEPANEL_OPENED',
+            success: response?.success || false,
+            sidePanel: !!response?.sidePanel,
+            error: response?.error
+          }, window.location.origin);
+        }
+      }
+    );
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_SET_USE_DEBUGGER') {

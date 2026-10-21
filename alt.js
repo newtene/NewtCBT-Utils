@@ -17,7 +17,8 @@
       document.referrer.includes('newtcbt.in') || 
       document.referrer.includes('localhost') || 
       document.referrer.includes('127.0.0.1') ||
-      document.referrer.includes('chrome-extension://')
+      document.referrer.includes('chrome-extension://') ||
+      document.referrer.includes('moz-extension://')
     )) ||
     sessionStorage.getItem('newtcbt_companion_mode') === 'true'
   );

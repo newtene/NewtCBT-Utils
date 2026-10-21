@@ -617,6 +617,29 @@
       handleExtractSolutionRequest(sendResponse);
       return true; // Keep message channel open for async response
     }
+    if (msg.type === 'RETRY_SUBMISSION') {
+      submissionStarted = false;
+      querySubmitted = false;
+      checkStorageAndRun();
+      sendResponse && sendResponse({ success: true });
+      return true;
+    }
+  });
+
+  // 6. Direct iframe postMessage listener from Side Panel
+  window.addEventListener('message', (event) => {
+    if (event.data && event.data.type === 'EXTRACT_SOLN_NOW') {
+      handleExtractSolutionRequest((resp) => {
+        try {
+          window.parent.postMessage({ type: 'EXTRACT_SOLN_RESULT', ...resp }, '*');
+        } catch (_) {}
+      });
+    }
+    if (event.data && event.data.type === 'RETRY_SUBMISSION') {
+      submissionStarted = false;
+      querySubmitted = false;
+      checkStorageAndRun();
+    }
   });
 
 })();

@@ -29,6 +29,7 @@
     "*://*.duckduckgo.com/*",
     "*://duckduckgo.com/*",
     "*://www.google.com/search*",
+    "*://*.google.com/*",
     "*://gemini.google.com/*",
     "*://aistudio.google.com/*",
     "*://*.newtcbt.in/*",
@@ -95,6 +96,13 @@
       "all_frames": true
     }
   ],
+  "action": {
+    "default_title": "NewtCBT AI Studio Companion",
+    "default_icon": "logo-32.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src 'self' https://aistudio.google.com https://gemini.google.com https://www.google.com https://accounts.google.com;"
+  },
   "background": {
     "scripts": ["background.js"]
   },

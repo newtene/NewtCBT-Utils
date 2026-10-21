@@ -600,8 +600,15 @@
   });
 
   window.addEventListener('message', (e) => {
-    if (e.data && e.data.type === 'NEWTCBT_RETRY_SUBMISSION') {
-      console.log('[AI Scraper] Received window NEWTCBT_RETRY_SUBMISSION');
+    if (e.data && e.data.type === 'EXTRACT_SOLN_NOW') {
+      handleExtractSolutionRequest((resp) => {
+        try {
+          window.parent.postMessage({ type: 'EXTRACT_SOLN_RESULT', ...resp }, '*');
+        } catch (_) {}
+      });
+    }
+    if (e.data && (e.data.type === 'NEWTCBT_RETRY_SUBMISSION' || e.data.type === 'RETRY_SUBMISSION')) {
+      console.log('[AI Scraper] Received window retry request');
       chrome.storage.local.get(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed'], function (res) {
         const q = res.newtcbt_google_ai_query || lastSubmissionPayload.query || 'Solve this exam question step-by-step.';
         const img = res.newtcbt_google_ai_image || lastSubmissionPayload.imageBase64 || null;

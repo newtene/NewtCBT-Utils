@@ -98,7 +98,7 @@
     "default_path": "sidepanel.html"
   },
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; frame-src 'self' https://aistudio.google.com https://gemini.google.com;"
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src 'self' https://aistudio.google.com https://gemini.google.com https://www.google.com;"
   },
   "background": {
     "service_worker": "background.js"

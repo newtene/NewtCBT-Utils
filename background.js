@@ -6,6 +6,10 @@ let activeNewtCbtTabId = null;
 let activeSidepanelPort = null;
 let attachedDebuggerTabId = null;
 
+function hasChromeSidePanel() {
+  return Boolean(typeof chrome !== 'undefined' && chrome.sidePanel && typeof chrome.sidePanel.open === 'function');
+}
+
 function lockTabForeground(tabId) {
   if (!tabId || typeof chrome === 'undefined' || !chrome.debugger || typeof chrome.debugger.sendCommand !== 'function') return;
   chrome.debugger.sendCommand({ tabId }, 'Page.enable', {}, () => {
@@ -140,6 +144,30 @@ if (typeof chrome !== 'undefined' && chrome.sidePanel) {
   }
 }
 
+// Handle extension action click (Chrome opens sidepanel, Firefox/other focuses/opens pinned companion tab)
+const actionObj = (typeof browser !== 'undefined' && (browser.action || browser.browserAction)) || (typeof chrome !== 'undefined' && chrome.action);
+if (actionObj && typeof actionObj.onClicked?.addListener === 'function') {
+  actionObj.onClicked.addListener((tab) => {
+    if (hasChromeSidePanel()) {
+      const winId = tab?.windowId;
+      chrome.sidePanel.open(winId ? { windowId: winId } : {}).catch(() => {});
+    } else {
+      chrome.storage.local.get(['newtcbt_active_companion_tab_id'], (res) => {
+        const cTabId = res?.newtcbt_active_companion_tab_id || activeCompanionTabId;
+        if (cTabId) {
+          chrome.tabs.update(cTabId, { active: true }, () => {
+            if (chrome.runtime.lastError) {
+              chrome.tabs.create({ url: 'https://aistudio.google.com/prompts/new_chat', pinned: true });
+            }
+          });
+        } else {
+          chrome.tabs.create({ url: 'https://aistudio.google.com/prompts/new_chat', pinned: true });
+        }
+      });
+    }
+  });
+}
+
 // Restore active tab IDs from storage on service worker boot
 chrome.storage.local.get(['newtcbt_active_companion_tab_id', 'newtcbt_active_newtcbt_tab_id', 'newtcbt_attached_debugger_tab_id'], (res) => {
   if (res?.newtcbt_active_companion_tab_id) activeCompanionTabId = res.newtcbt_active_companion_tab_id;
@@ -235,7 +263,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   // Focus Companion tab/sidepanel from NewtCBT
-  if (request.type === 'FOCUS_COMPANION_TAB') {
+  if (request.type === 'FOCUS_COMPANION_TAB' || request.type === 'OPEN_SIDEPANEL') {
     const focusTabById = (tabId) => {
       chrome.tabs.update(tabId, { active: true }, () => {
         if (chrome.runtime.lastError) {}
@@ -247,39 +275,69 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     };
 
-    chrome.storage.local.get(['newtcbt_companion_is_sidepanel', 'newtcbt_active_companion_tab_id'], (res) => {
-      if (res?.newtcbt_companion_is_sidepanel && chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
-        chrome.windows.getCurrent((win) => {
-          if (win?.id) chrome.sidePanel.open({ windowId: win.id }).catch(() => {});
-        });
-      } else {
-        const targetTabId = activeCompanionTabId || res?.newtcbt_active_companion_tab_id;
-        if (targetTabId) {
-          chrome.tabs.get(targetTabId, (tab) => {
-            if (!chrome.runtime.lastError && tab) {
-              activeCompanionTabId = targetTabId;
-              focusTabById(targetTabId);
-            } else {
-              chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
-                if (tabs && tabs.length > 0) {
-                  activeCompanionTabId = tabs[tabs.length - 1].id;
-                  focusTabById(activeCompanionTabId);
-                }
-              });
-            }
+    const isExplicitSidepanel = request.companionMode === 'sidepanel' || request.mode === 'sidepanel' || request.type === 'OPEN_SIDEPANEL';
+
+    chrome.storage.local.get(['newtcbt_companion_is_sidepanel', 'newtcbt_active_companion_tab_id', 'newtcbt_sidepanel_url'], (res) => {
+      const isSidepanelMode = isExplicitSidepanel || !!res?.newtcbt_companion_is_sidepanel;
+
+      if (isSidepanelMode && hasChromeSidePanel()) {
+        chrome.storage.local.set({ newtcbt_companion_is_sidepanel: true });
+        const callerWindowId = sender.tab?.windowId;
+        const openOptions = callerWindowId ? { windowId: callerWindowId } : {};
+        if (callerWindowId) {
+          chrome.sidePanel.open(openOptions).then(() => {
+            sendResponse({ success: true, sidePanel: true });
+          }).catch((err) => {
+            console.warn('[NewtCBT] chrome.sidePanel.open error in FOCUS_COMPANION_TAB:', err);
+            sendResponse({ success: false, error: err?.message || String(err) });
           });
         } else {
-          chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
-            if (tabs && tabs.length > 0) {
-              activeCompanionTabId = tabs[tabs.length - 1].id;
-              focusTabById(activeCompanionTabId);
-            }
+          chrome.windows.getCurrent((win) => {
+            const wId = win?.id;
+            chrome.sidePanel.open(wId ? { windowId: wId } : {}).then(() => {
+              sendResponse({ success: true, sidePanel: true });
+            }).catch((err) => {
+              console.warn('[NewtCBT] chrome.sidePanel.open error in FOCUS_COMPANION_TAB:', err);
+              sendResponse({ success: false, error: err?.message || String(err) });
+            });
           });
         }
+        return;
+      }
+
+      // Otherwise focus pinned tab
+      const targetTabId = activeCompanionTabId || res?.newtcbt_active_companion_tab_id;
+      if (targetTabId) {
+        chrome.tabs.get(targetTabId, (tab) => {
+          if (!chrome.runtime.lastError && tab) {
+            activeCompanionTabId = targetTabId;
+            focusTabById(targetTabId);
+            sendResponse({ success: true, tabId: targetTabId });
+          } else {
+            chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
+              if (tabs && tabs.length > 0) {
+                activeCompanionTabId = tabs[tabs.length - 1].id;
+                focusTabById(activeCompanionTabId);
+                sendResponse({ success: true, tabId: activeCompanionTabId });
+              } else {
+                sendResponse({ success: false, error: 'No companion tab found' });
+              }
+            });
+          }
+        });
+      } else {
+        chrome.tabs.query({ url: '*://aistudio.google.com/*' }, (tabs) => {
+          if (tabs && tabs.length > 0) {
+            activeCompanionTabId = tabs[tabs.length - 1].id;
+            focusTabById(activeCompanionTabId);
+            sendResponse({ success: true, tabId: activeCompanionTabId });
+          } else {
+            sendResponse({ success: false, error: 'No companion tab found' });
+          }
+        });
       }
     });
-    sendResponse({ success: true });
-    return false;
+    return true;
   }
 
   // Live update debugging mode preference from NewtCBT
@@ -401,8 +459,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
     };
 
-    // 1. Chrome Side Panel mode:
-    if (companionMode === 'sidepanel' && typeof chrome !== 'undefined' && chrome.sidePanel && typeof chrome.sidePanel.open === 'function') {
+    // 1. Native Side Panel mode (Chrome Side Panel API):
+    const isChromeSidePanel = hasChromeSidePanel();
+    const isSidePanelAvailable = isChromeSidePanel;
+
+    if (companionMode === 'sidepanel' && isSidePanelAvailable) {
       const callerWindowId = sender.tab?.windowId;
       const callerTabId = sender.tab?.id;
 
@@ -416,16 +477,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
       // When forceNewChat is false, preserve existing multi-turn chat session
       if (!forceNewChat && activeSidepanelPort) {
+        chrome.storage.local.set({
+          newtcbt_sidepanel_session_mode: 'generate'
+        });
+        try {
+          activeSidepanelPort.postMessage({ type: 'SET_SIDEPANEL_MODE', mode: 'generate' });
+        } catch (_) {}
         sendResponse({ success: true, sidePanel: true, reused: true });
         return true;
       }
 
       // Check via chrome.runtime.getContexts if available
       const checkAndOpenSidePanel = async () => {
-        if (!forceNewChat && chrome.runtime && typeof chrome.runtime.getContexts === 'function') {
+        if (isChromeSidePanel && !forceNewChat && chrome.runtime && typeof chrome.runtime.getContexts === 'function') {
           try {
             const contexts = await chrome.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] });
             if (contexts && contexts.length > 0) {
+              chrome.storage.local.set({
+                newtcbt_sidepanel_session_mode: 'generate'
+              });
               sendResponse({ success: true, sidePanel: true, reused: true });
               return;
             }
@@ -435,16 +505,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         // Side panel needs to load new chat or open for the first time
         chrome.storage.local.set({
           newtcbt_sidepanel_url: targetUrl,
-          newtcbt_companion_is_sidepanel: true
+          newtcbt_companion_is_sidepanel: true,
+          newtcbt_sidepanel_session_mode: 'generate'
         });
 
         if (activeSidepanelPort) {
           try {
-            activeSidepanelPort.postMessage({ type: 'UPDATE_SIDEPANEL_URL', url: targetUrl });
+            activeSidepanelPort.postMessage({ type: 'UPDATE_SIDEPANEL_URL', url: targetUrl, mode: 'generate' });
           } catch (_) {}
           chrome.runtime.sendMessage({
             type: 'UPDATE_SIDEPANEL_URL',
-            url: targetUrl
+            url: targetUrl,
+            mode: 'generate'
           }).catch(() => {});
           sendResponse({ success: true, sidePanel: true, reused: true });
           return;
@@ -452,25 +524,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
         chrome.runtime.sendMessage({
           type: 'UPDATE_SIDEPANEL_URL',
-          url: targetUrl
+          url: targetUrl,
+          mode: 'generate'
         }).catch(() => {});
 
-        const openSidePanel = (winId) => {
-          const options = winId ? { windowId: winId } : (callerTabId ? { tabId: callerTabId } : {});
-          chrome.sidePanel.open(options).then(() => {
-            sendResponse({ success: true, sidePanel: true, reused: false });
-          }).catch((err) => {
-            console.warn('[NewtCBT] chrome.sidePanel.open failed, stopping generation:', err);
-            sendResponse({ success: false, error: 'Side panel could not be opened: ' + (err?.message || err) });
-          });
-        };
+        if (isChromeSidePanel) {
+          const openSidePanel = (winId) => {
+            const options = winId ? { windowId: winId } : (callerTabId ? { tabId: callerTabId } : {});
+            chrome.sidePanel.open(options).then(() => {
+              sendResponse({ success: true, sidePanel: true, reused: false });
+            }).catch((err) => {
+              console.warn('[NewtCBT] chrome.sidePanel.open failed, stopping generation:', err);
+              sendResponse({ success: false, error: 'Side panel could not be opened: ' + (err?.message || err) });
+            });
+          };
 
-        if (callerWindowId) {
-          openSidePanel(callerWindowId);
-        } else {
-          chrome.windows.getCurrent((win) => {
-            openSidePanel(win?.id);
-          });
+          if (callerWindowId) {
+            openSidePanel(callerWindowId);
+          } else {
+            chrome.windows.getCurrent((win) => {
+              openSidePanel(win?.id);
+            });
+          }
         }
       };
 
@@ -554,7 +629,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const source = request.source || 'gemini';
     const query = request.query || 'Solve this exam question step-by-step.';
     const image = request.image || null;
-    const isPinned = !!request.isPinned;
+    const companionMode = request.companionMode || request.mode || (request.isPinned ? 'pinned' : 'sidepanel');
+    const isChromeSidePanel = hasChromeSidePanel();
+    const isSidePanelAvailable = isChromeSidePanel;
+    const isPinned = companionMode === 'pinned' || (!isSidePanelAvailable && !!request.isPinned);
 
     if (sender.tab?.id) {
       activeNewtCbtTabId = sender.tab.id;
@@ -582,6 +660,47 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     chrome.storage.local.set(storagePayload, () => {
       if (chrome.runtime.lastError) console.warn('[NewtCBT Storage]', chrome.runtime.lastError.message);
+
+      // Native Side Panel mode (Chrome Side Panel API):
+      if (companionMode === 'sidepanel' && isSidePanelAvailable) {
+        chrome.storage.local.set({
+          newtcbt_sidepanel_url: targetUrl,
+          newtcbt_companion_is_sidepanel: true,
+          newtcbt_sidepanel_session_mode: 'solution'
+        });
+
+        if (activeSidepanelPort) {
+          try {
+            activeSidepanelPort.postMessage({ type: 'UPDATE_SIDEPANEL_URL', url: targetUrl, mode: 'solution' });
+          } catch (_) {}
+          chrome.runtime.sendMessage({
+            type: 'UPDATE_SIDEPANEL_URL',
+            url: targetUrl,
+            mode: 'solution'
+          }).catch(() => {});
+          sendResponse({ success: true, url: targetUrl, sidePanel: true, reused: true });
+          return;
+        }
+
+        chrome.runtime.sendMessage({
+          type: 'UPDATE_SIDEPANEL_URL',
+          url: targetUrl,
+          mode: 'solution'
+        }).catch(() => {});
+
+        if (isChromeSidePanel) {
+          const callerWindowId = sender.tab?.windowId;
+          const callerTabId = sender.tab?.id;
+          const options = callerWindowId ? { windowId: callerWindowId } : (callerTabId ? { tabId: callerTabId } : {});
+          chrome.sidePanel.open(options).then(() => {
+            sendResponse({ success: true, url: targetUrl, sidePanel: true, reused: false });
+          }).catch((err) => {
+            console.warn('[NewtCBT] chrome.sidePanel.open failed in PREPARE_EMBED:', err);
+            sendResponse({ success: false, error: 'Side panel could not be opened: ' + (err?.message || err) });
+          });
+        }
+        return;
+      }
 
       if (!isPinned) {
         sendResponse({
@@ -637,6 +756,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'TRIGGER_RETRY_SUBMISSION') {
+    if (activeSidepanelPort) {
+      try {
+        activeSidepanelPort.postMessage({ type: 'RETRY_SUBMISSION' });
+      } catch (_) {}
+    }
     const targetTabId = sender.tab?.id || activeCompanionTabId;
     if (targetTabId) {
       chrome.tabs.sendMessage(targetTabId, { type: 'RETRY_SUBMISSION' }, (resp) => {
@@ -644,11 +768,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
       return true;
     }
-    sendResponse({ success: false });
+    sendResponse({ success: true });
     return false;
   }
 
   if (request.type === 'TRIGGER_EXTRACT_SOLN') {
+    if (activeSidepanelPort) {
+      try {
+        activeSidepanelPort.postMessage({ type: 'EXTRACT_SOLN_NOW' });
+      } catch (_) {}
+    }
+
     const senderTabId = sender.tab?.id;
     let targetTabId = senderTabId;
 
@@ -657,16 +787,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       targetTabId = activeCompanionTabId;
     }
 
-    queryTabForSolution(targetTabId, (resp) => {
-      if (resp && resp.success && resp.text) {
-        broadcastToNewtCBTTabs({
-          type: 'NEWTCBT_EXTRACTED_SOLN_RESULT',
-          success: true,
-          text: resp.text
-        });
-      }
-      sendResponse(resp || { success: false, error: 'Assistant did not respond.' });
-    });
+    if (targetTabId) {
+      queryTabForSolution(targetTabId, (resp) => {
+        if (resp && resp.success && resp.text) {
+          broadcastToNewtCBTTabs({
+            type: 'NEWTCBT_EXTRACTED_SOLN_RESULT',
+            success: true,
+            text: resp.text
+          });
+        }
+        sendResponse(resp || { success: false, error: 'Assistant did not respond.' });
+      });
+      return true;
+    }
+
+    sendResponse({ success: true, pendingSidePanel: true });
+    return true;
+  }
+
+  if (request.type === 'AI_SOLUTION_EXTRACTED') {
+    if (request.text) {
+      broadcastToNewtCBTTabs({
+        type: 'NEWTCBT_EXTRACTED_SOLN_RESULT',
+        success: true,
+        text: request.text
+      });
+    }
+    sendResponse && sendResponse({ success: true });
     return true;
   }
 
@@ -829,7 +976,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       }
       if (request.stage === 'dia' || request.stage === 'final' || request.closeCompanion) {
         // Close Side Panel if open
-        chrome.storage.local.remove(['newtcbt_sidepanel_url', 'newtcbt_companion_is_sidepanel']);
+        chrome.storage.local.remove(['newtcbt_sidepanel_url', 'newtcbt_companion_is_sidepanel', 'newtcbt_sidepanel_session_mode']);
         chrome.runtime.sendMessage({ type: 'CLOSE_SIDEPANEL' }).catch(() => {});
         detachDebugger();
 
@@ -861,7 +1008,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     // Do NOT close sidepanel if this is an interim stage transition
     if (request.interim !== true) {
-      chrome.storage.local.remove(['newtcbt_sidepanel_url', 'newtcbt_companion_is_sidepanel', 'newtcbt_sidepanel_is_open']);
+      chrome.storage.local.remove(['newtcbt_sidepanel_url', 'newtcbt_companion_is_sidepanel', 'newtcbt_sidepanel_is_open', 'newtcbt_sidepanel_session_mode']);
       if (activeSidepanelPort) {
         try { activeSidepanelPort.postMessage({ type: 'CLOSE_SIDEPANEL' }); } catch (_) {}
       }
@@ -914,14 +1061,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const targetUrl = `https://aistudio.google.com/prompts/new_chat?model=${encodeURIComponent(model)}&_s=${timestamp}#newtcbt_companion=1`;
 
         chrome.storage.local.get(['newtcbt_companion_is_sidepanel'], (res) => {
-          if ((activeSidepanelPort || res?.newtcbt_companion_is_sidepanel) && chrome.sidePanel) {
-            chrome.storage.local.set({ newtcbt_sidepanel_url: targetUrl });
+          if ((activeSidepanelPort || res?.newtcbt_companion_is_sidepanel) && hasChromeSidePanel()) {
+            chrome.storage.local.set({
+              newtcbt_sidepanel_url: targetUrl,
+              newtcbt_sidepanel_session_mode: 'generate'
+            });
             if (activeSidepanelPort) {
-              try { activeSidepanelPort.postMessage({ type: 'UPDATE_SIDEPANEL_URL', url: targetUrl }); } catch (_) {}
+              try { activeSidepanelPort.postMessage({ type: 'UPDATE_SIDEPANEL_URL', url: targetUrl, mode: 'generate' }); } catch (_) {}
             }
             chrome.runtime.sendMessage({
               type: 'UPDATE_SIDEPANEL_URL',
-              url: targetUrl
+              url: targetUrl,
+              mode: 'generate'
             }).catch(() => {});
             sendResponse({ success: true, sidePanel: true });
             return;
