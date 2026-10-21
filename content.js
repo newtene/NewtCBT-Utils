@@ -191,7 +191,9 @@ window.addEventListener('message', function(event) {
         type: 'LAUNCH_PINNED_STAGE',
         model: event.data.model || 'gemini-3.8-flash',
         active: event.data.active !== false,
-        forceNewChat: !!event.data.forceNewChat
+        forceNewChat: !!event.data.forceNewChat,
+        companionMode: event.data.companionMode || event.data.mode || 'pinned',
+        useDebugger: !!event.data.useDebugger
       },
       (response) => {
         window.postMessage({
@@ -206,6 +208,13 @@ window.addEventListener('message', function(event) {
 
   if (event.data.type && event.data.type === 'NEWTCBT_FOCUS_PINNED_TAB') {
     safeSendMessage({ type: 'FOCUS_COMPANION_TAB' });
+  }
+
+  if (event.data.type && event.data.type === 'NEWTCBT_SET_USE_DEBUGGER') {
+    safeSendMessage({
+      type: 'SET_USE_DEBUGGER',
+      useDebugger: !!event.data.useDebugger
+    });
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_CLOSE_COMPANION_TAB') {
@@ -277,7 +286,8 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage)
       msg.type === 'NEWTCBT_GEM_ERROR' ||
       msg.type === 'NEWTCBT_ALT_ERROR' ||
       msg.type === 'NEWTCBT_AI_STUDIO_MODEL_UPDATED' ||
-      msg.type === 'NEWTCBT_EXTRACTED_SOLN_RESULT'
+      msg.type === 'NEWTCBT_EXTRACTED_SOLN_RESULT' ||
+      msg.type === 'NEWTCBT_SIDEPANEL_CLOSED'
     ) {
       window.postMessage(msg, window.location.origin);
       sendResponse && sendResponse({ relayed: true });

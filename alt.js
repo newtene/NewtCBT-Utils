@@ -12,7 +12,14 @@
   const isEmbed = window.self !== window.top;
   const isNewtEmbedded = isEmbed && (
     window.location.hash.includes('newtcbt') || 
-    (document.referrer && (document.referrer.includes('newtcbt.in') || document.referrer.includes('localhost') || document.referrer.includes('127.0.0.1')))
+    window.location.search.includes('_s=') ||
+    (document.referrer && (
+      document.referrer.includes('newtcbt.in') || 
+      document.referrer.includes('localhost') || 
+      document.referrer.includes('127.0.0.1') ||
+      document.referrer.includes('chrome-extension://')
+    )) ||
+    sessionStorage.getItem('newtcbt_companion_mode') === 'true'
   );
   const isNewtSession = !isEmbed && (
     window.location.search.includes('_s=') || 
@@ -26,7 +33,7 @@
     return;
   }
 
-  if (isNewtSession) {
+  if (isNewtSession || isNewtEmbedded) {
     try { sessionStorage.setItem('newtcbt_companion_mode', 'true'); } catch (_) {}
   }
 
@@ -44,6 +51,227 @@
   }
 
   console.log('[NewtCBT:Alt] AI Studio scraper initialized on:', window.location.href);
+
+  // ================================================================
+  // CLEAN UPPER PANEL & PERSISTENT NEWTCBT STATUS IN EXISTING SURFACE
+  // ================================================================
+  function setupCleanCompanionHeader() {
+    try {
+      // Remove any lingering legacy banner
+      const oldBanner = document.getElementById('newtcbt-companion-banner');
+      if (oldBanner) oldBanner.remove();
+
+      if (!document.getElementById('newtcbt-clean-header-style')) {
+        const style = document.createElement('style');
+        style.id = 'newtcbt-clean-header-style';
+        style.textContent = `
+          /* Strip bloat buttons and tokens from Google AI Studio top bar */
+          button[aria-label*="menu" i],
+          button[aria-label*="navigation" i],
+          button[aria-label*="new" i],
+          button[aria-label*="more" i],
+          button[aria-label*="settings" i],
+          button[aria-label*="tune" i],
+          button[aria-label*="parameters" i],
+          header .mat-mdc-icon-button,
+          ms-header button,
+          ms-header ms-share-prompt,
+          ms-header .compare-button,
+          ms-header .overflow-menu-wrapper,
+          ms-header button[data-test-clear],
+          ms-header .token-container,
+          ms-header ms-token-count,
+          ms-header .v3-token-count-value,
+          ms-header .token-count-container,
+          ms-header .xap-inline-dialog,
+          ms-header span[class*="token-count"],
+          ms-header [class*="token-container"] {
+            display: none !important;
+          }
+
+          /* Hide default 'Playground' text */
+          ms-header .page-title h1.mode-title,
+          ms-header h1.mode-title {
+            display: none !important;
+          }
+
+          /* Transform the existing ms-header surface (pinned to left, solid obsidian) */
+          ms-header {
+            padding: 8px 12px 6px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            justify-content: flex-start !important;
+            background: #0d0d12 !important;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+            min-height: 48px !important;
+            box-sizing: border-box !important;
+            width: 100% !important;
+          }
+
+          ms-header .toolbar-left {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            justify-content: flex-start !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+
+          ms-header .title-tokencount-container {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            justify-content: flex-start !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            gap: 4px !important;
+          }
+
+          ms-header .page-title {
+            margin: 0 !important;
+            padding: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            text-align: left !important;
+            width: 100% !important;
+          }
+
+          /* Brand element in existing header surface (left aligned) */
+          .newtcbt-header-brand {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            gap: 7px !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            text-align: left !important;
+            flex-shrink: 0 !important;
+          }
+
+          .newtcbt-header-brand img {
+            width: 18px !important;
+            height: 18px !important;
+            border-radius: 4px !important;
+            display: block !important;
+            margin: 0 !important;
+          }
+
+          .newtcbt-header-brand .title {
+            font-size: 13px !important;
+            font-weight: 600 !important;
+            color: #f4f4f5 !important;
+            letter-spacing: -0.01em !important;
+            white-space: nowrap !important;
+            text-align: left !important;
+          }
+
+          /* Note badge and text in existing header surface - ZERO BORDER */
+          .newtcbt-header-note {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            gap: 6px !important;
+            background: rgba(245, 158, 11, 0.12) !important;
+            border: none !important;
+            outline: none !important;
+            border-radius: 4px !important;
+            padding: 3px 8px !important;
+            margin: 2px 0 0 0 !important;
+            max-width: 100% !important;
+            box-shadow: none !important;
+          }
+
+          .newtcbt-header-note .badge {
+            font-size: 9px !important;
+            font-weight: 700 !important;
+            text-transform: uppercase !important;
+            background: rgba(245, 158, 11, 0.24) !important;
+            color: #fbbf24 !important;
+            border: none !important;
+            outline: none !important;
+            border-radius: 3px !important;
+            padding: 1px 4px !important;
+            line-height: 1.2 !important;
+            flex-shrink: 0 !important;
+          }
+
+          .newtcbt-header-note .text {
+            font-size: 11px !important;
+            color: #d4d4d8 !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+          }
+        `;
+        (document.head || document.documentElement).appendChild(style);
+      }
+
+      const updateExistingSurface = () => {
+        const legacyBanner = document.getElementById('newtcbt-companion-banner');
+        if (legacyBanner) legacyBanner.remove();
+
+        const header = document.querySelector('ms-header');
+        if (!header) return;
+
+        // Clean any token count DOM nodes
+        const tokenEls = header.querySelectorAll('.token-container, ms-token-count, .v3-token-count-value, .token-count-container');
+        tokenEls.forEach(el => el.remove());
+
+        const logoUrl = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
+          ? chrome.runtime.getURL('logo-32.png')
+          : '';
+
+        const pageTitle = header.querySelector('.page-title');
+        if (pageTitle && !pageTitle.querySelector('.newtcbt-header-brand')) {
+          const brand = document.createElement('div');
+          brand.className = 'newtcbt-header-brand';
+          brand.innerHTML = `
+            ${logoUrl ? `<img src="${logoUrl}" alt="Newt" />` : ''}
+            <span class="title">NewtCBT generating test</span>
+          `;
+          pageTitle.prepend(brand);
+        }
+
+        const container = header.querySelector('.title-tokencount-container') || header.querySelector('.toolbar-left') || header;
+        if (container && !header.querySelector('.newtcbt-header-note')) {
+          const note = document.createElement('div');
+          note.className = 'newtcbt-header-note';
+          note.title = 'Note - dont close the panel it will stop generation.';
+          note.innerHTML = `
+            <span class="badge">NOTE</span>
+            <span class="text">dont close the panel it will stop generation.</span>
+          `;
+          container.appendChild(note);
+        }
+      };
+
+      updateExistingSurface();
+
+      const observer = new MutationObserver(() => {
+        updateExistingSurface();
+      });
+
+      if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+      } else {
+        window.addEventListener('DOMContentLoaded', () => {
+          updateExistingSurface();
+          if (document.body) {
+            observer.observe(document.body, { childList: true, subtree: true });
+          }
+        }, { once: true });
+      }
+    } catch (e) {
+      console.warn('[NewtCBT:Alt] Failed to attach to companion header surface:', e);
+    }
+  }
+
+  setupCleanCompanionHeader();
 
   // ================================================================
   // 1. STATE & DEDUPLICATION
@@ -282,10 +510,38 @@
 
   function getModelTurns() {
     const turns = Array.from(document.querySelectorAll('ms-chat-turn'));
-    return turns.filter(t => 
-      t.querySelector('.chat-turn-container.model, [data-turn-role="Model"]') && 
-      !t.classList.contains('thought-activity-host')
-    );
+    return turns.filter(t => {
+      const hasModelClass = t.classList.contains('model') || 
+                            !!t.querySelector('.chat-turn-container.model, [data-turn-role="Model"], ms-response-header');
+      const isUser = t.classList.contains('user') || 
+                     !!t.querySelector('.chat-turn-container.user, [data-turn-role="User"]');
+      const isThought = t.classList.contains('thought-activity-host');
+      return (hasModelClass || !isUser) && !isThought;
+    });
+  }
+
+  function isPayloadValidForStage(payload, stage) {
+    if (!payload || typeof payload !== 'string') return false;
+    const len = payload.length;
+    if (stage === 'loki') {
+      if (len < 120) return false;
+      const hasStructure = /^#{1,4}\s+[A-Za-z]/m.test(payload) || 
+                           /\[(?:OPTIONS|CH:|DIAGRAM)/i.test(payload) ||
+                           /^[1-9]\d{0,2}[\.\)]\s+[\s\S]*?(?:\([A-D1-4]\)|\[OPTIONS\]|\$)/m.test(payload);
+      const stripped = payload.replace(/\s+/g, ' ').trim();
+      const isPureAnsKey = /^(?:(?:Q\.?\s*\d+|\d{1,3}[\.\:\)])\s*[\(\[]?[A-D1-4][\)\]]?\s*)+$/im.test(stripped) ||
+                           (!payload.includes('OPTIONS') && !payload.includes('$') && !payload.includes('#') && !/(?:\([A-D]\).*?\([A-D]\))/s.test(payload) && !/(?:[A-D]\).*?[A-D]\))/s.test(payload));
+      return hasStructure && !isPureAnsKey;
+    }
+    if (stage === 'dia') {
+      if (len < 20) return false;
+      return /^\s*\[\s*\{/m.test(payload) || /^\s*\{\s*"/m.test(payload) || (/"questionNumber"/i.test(payload) && /"box/i.test(payload)) || /"diagrams"\s*:\s*\[/i.test(payload);
+    }
+    if (stage === 'sylvie' || stage === 'ans' || stage === 'key') {
+      if (len < 20) return false;
+      return /^(?:(?:Q\.?\s*\d+|\d{1,3}[\.\:\)])\s*[\(\[]?[A-D1-4][\)\]]?)/im.test(payload) || /"answers"/i.test(payload) || /^\s*[\{\[]/m.test(payload);
+    }
+    return len >= 20;
   }
 
   function extractAiStudioMarkdown(minModelTurnCount = 0) {
@@ -295,9 +551,11 @@
       return null;
     }
 
-    // Search model turns from the latest down to minModelTurnCount (or all turns if minModelTurnCount is 0)
+    // Search model turns from the latest down to minModelTurnCount (never document.body if minModelTurnCount > 0)
     const startIndex = Math.max(0, minModelTurnCount > 0 ? minModelTurnCount - 1 : 0);
-    const candidateTurns = modelTurns.length > 0 ? modelTurns.slice(startIndex).reverse() : [document.body];
+    const candidateTurns = modelTurns.length > 0 
+      ? modelTurns.slice(startIndex).reverse() 
+      : (minModelTurnCount === 0 ? [document.body] : []);
 
     for (const turn of candidateTurns) {
       // 1. PRIMARY TARGET: Find code element strictly INSIDE ms-code-block of turn
@@ -528,6 +786,11 @@
     notifyAltProgress(stage, 'submitting', 0, 35, jobId);
     console.log('[NewtCBT:Alt] Dispatching Run button click events ✓');
 
+    // Reset stream state immediately BEFORE clicking Run so we don't miss or prematurely wipe chunks
+    latestStreamText = '';
+    streamIsDone = false;
+    streamError = null;
+
     try {
       runBtn.focus();
       runBtn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
@@ -557,9 +820,7 @@
     }, 700);
 
     const minModelTurns = initialModelTurns + 1;
-    setTimeout(() => {
-      observeAiStudioStreaming(stage, jobId, minModelTurns);
-    }, 800);
+    observeAiStudioStreaming(stage, jobId, minModelTurns);
   }
 
   async function triggerRunAndObserve(stage, jobId, initialModelTurns = 0, textarea = null) {
@@ -647,10 +908,12 @@
       activeObserverInterval = null;
     }
 
-    // Reset direct network stream state for this stage
-    latestStreamText = '';
-    streamIsDone = false;
-    streamError = null;
+    // Only reset stream state if generation is not active or if current stream does not match stage
+    if (!isGeneratingActive() && (!latestStreamText || !isPayloadValidForStage(latestStreamText, stage))) {
+      latestStreamText = '';
+      streamIsDone = false;
+      streamError = null;
+    }
 
     const startTime = Date.now();
     let domStableTicks = 0;
@@ -734,15 +997,20 @@
         // Completion requirements:
         // 1. MUST NOT cut off while AI Studio is actively generating (Stop button is visible)
         // 2. Either the HTTP stream finished (streamIsDone) OR generation ended (!isDomGen) and payload has been stable
+        // 3. Must have actually engaged generation (everGenerating || streamIsDone)
+        // 4. Must be structurally valid for the current stage (never pure answer keys for Loki)
         const isNetworkComplete = streamIsDone && (!isDomGen || streamStableTicks >= 2);
         const isSettledAfterStop = !isDomGen && streamStableTicks >= 8; // 4s stable AFTER Stop button disappears
 
-        if (isNetworkComplete || isSettledAfterStop) {
+        if ((isNetworkComplete || isSettledAfterStop) && (everGenerating || streamIsDone) && isPayloadValidForStage(cleanStreamPayload, stage)) {
           clearInterval(interval);
           activeObserverInterval = null;
-          console.log(`[NewtCBT:Alt] Direct network stream complete for ${stage} (${cleanStreamPayload.length} chars, streamIsDone: ${streamIsDone}) ✓`);
-          notifyAltProgress(stage, 'complete', cleanStreamPayload.length, 100, jobId);
-          notifyAltComplete(stage, cleanStreamPayload, jobId, true);
+          const finalPayload = (cleanDomPayload && cleanDomPayload.length > cleanStreamPayload.length && isPayloadValidForStage(cleanDomPayload, stage))
+            ? cleanDomPayload
+            : cleanStreamPayload;
+          console.log(`[NewtCBT:Alt] Direct network stream complete for ${stage} (${finalPayload.length} chars, streamIsDone: ${streamIsDone}) ✓`);
+          notifyAltProgress(stage, 'complete', finalPayload.length, 100, jobId);
+          notifyAltComplete(stage, finalPayload, jobId, true);
           altProcessing = false;
           return;
         }
@@ -751,11 +1019,12 @@
       // ─── PATH 2: DOM COMPLETION (FALLBACK IF STREAM INTERCEPTOR HAD NO DATA) ───
       // ONLY used if network stream did NOT produce content.
       // Must wait until DOM generation spinner/Stop button is completely gone (!isDomGen)
-      // AND text length has remained completely stable for 2 seconds (4 ticks).
+      // AND text length has remained completely stable for 2 seconds (4 ticks)
+      // AND must be structurally valid for stage.
       if (!hasStreamData && hasDomData && !isDomGen) {
         if (cleanDomPayload.length === lastDomLen) {
           domStableTicks++;
-          if (domStableTicks >= 4) { // Stable for 2 seconds after generation ends
+          if (domStableTicks >= 4 && (everGenerating || streamIsDone) && isPayloadValidForStage(cleanDomPayload, stage)) {
             clearInterval(interval);
             activeObserverInterval = null;
             console.log(`[NewtCBT:Alt] DOM Extraction complete for ${stage} (${cleanDomPayload.length} chars) ✓`);
@@ -777,8 +1046,8 @@
       if (Date.now() - startTime > maxTimeoutMs) {
         clearInterval(interval);
         activeObserverInterval = null;
-        if (curLen >= minLength) {
-          console.warn(`[NewtCBT:Alt] Reached timeout but extracted partial payload (${curLen} chars).`);
+        if (curLen >= minLength && isPayloadValidForStage(rawPayload, stage)) {
+          console.warn(`[NewtCBT:Alt] Reached timeout but extracted valid partial payload (${curLen} chars).`);
           notifyAltComplete(stage, rawPayload, jobId, true);
         } else {
           console.error(`[NewtCBT:Alt] Timed out waiting for response from AI Studio.`);

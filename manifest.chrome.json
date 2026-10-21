@@ -15,7 +15,9 @@
     "tabs",
     "storage",
     "unlimitedStorage",
-    "webNavigation"
+    "webNavigation",
+    "sidePanel",
+    "debugger"
   ],
   "host_permissions": [
     "*://*.youtube.com/*",
@@ -89,6 +91,15 @@
       "all_frames": true
     }
   ],
+  "action": {
+    "default_title": "NewtCBT AI Studio Companion"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; frame-src 'self' https://aistudio.google.com https://gemini.google.com;"
+  },
   "background": {
     "service_worker": "background.js"
   },

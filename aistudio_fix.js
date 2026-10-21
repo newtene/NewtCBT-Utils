@@ -212,7 +212,7 @@
 
     XMLHttpRequest.prototype.send = function (body) {
       const url = this._newtcbt_url || '';
-      if (/generatecontent|makersuiteservice/i.test(url)) {
+      if (/generatecontent/i.test(url)) {
         const emitStream = (isDone, status = 200, error = null) => {
           let raw = '';
           try {
@@ -278,7 +278,7 @@
     window.fetch = async function (input, init) {
       const url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
       const response = await origFetch.apply(this, arguments);
-      if (url && /generatecontent|makersuiteservice/i.test(url) && response && response.clone) {
+      if (url && /generatecontent/i.test(url) && response && response.clone) {
         try {
           const clone = response.clone();
           const reader = clone.body.getReader();
