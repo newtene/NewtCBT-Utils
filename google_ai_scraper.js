@@ -30,6 +30,7 @@
   let imageUploadInProgress = false;
   let querySubmitted = false;
   let submissionStarted = false;
+  let autoRetryCount = 0;
 
   function dataURLtoFile(dataurl, filename = 'question.png') {
     try {
@@ -68,14 +69,15 @@
   }
 
   function hasGoogleAIImagePreview(inputEl) {
-    const plate = getGoogleAIInputPlate(inputEl);
+    const plate = getGoogleAIInputPlate(inputEl) || document;
     if (!plate) return false;
 
     // 1. Check for real blob/data image thumbnails inside the input plate
-    const imgs = Array.from(plate.querySelectorAll('img')).filter(img => {
-      const src = img.src || '';
+    const imgs = Array.from(plate.querySelectorAll('img, button[aria-label*=".png" i], button[aria-label*=".jpg" i], button[aria-label*="question" i]')).filter(el => {
+      if (el.tagName === 'BUTTON') return el.offsetWidth > 0;
+      const src = el.src || '';
       const isBlob = src.startsWith('blob:') || src.startsWith('data:image/');
-      const rect = img.getBoundingClientRect();
+      const rect = el.getBoundingClientRect();
       return isBlob && rect.width > 15 && rect.height > 15;
     });
     if (imgs.length > 0) return true;
@@ -88,7 +90,7 @@
 
     // 3. Check for thumbnail container with image inside the input plate
     const thumbImg = plate.querySelector(
-      'div[data-xid*="thumbnail"] img, div[data-xid*="attachment"] img, .AypGw img, div[data-xid] img'
+      'div[data-xid*="thumbnail"] img, div[data-xid*="attachment"] img, .AypGw img, div[data-xid] img, .AoJF8e'
     );
     if (thumbImg && thumbImg.getBoundingClientRect().width > 15) return true;
 
@@ -99,37 +101,26 @@
     return false;
   }
 
-  async function pasteImageToInput(inputEl, dataUrl) {
-    const file = dataURLtoFile(dataUrl);
-    if (!file) {
-      console.error('[AI Scraper] Failed to convert dataUrl to File');
-      return false;
+  async function waitForPreview(inputEl, maxWaitMs = 2000) {
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+      if (hasGoogleAIImagePreview(inputEl)) {
+        return true;
+      }
+      await new Promise(r => setTimeout(r, 100));
     }
+    return hasGoogleAIImagePreview(inputEl);
+  }
 
+  async function attachImageToGoogleAI(inputEl, fileObj) {
+    if (!inputEl || !fileObj) return false;
     inputEl.focus();
+
     const dt = new DataTransfer();
-    dt.items.add(file);
+    dt.items.add(fileObj);
 
-    // Format 1: Single Drag & Drop onto inputEl (attaches exactly 1 image in Firefox/Zen and Chrome)
-    console.log('[AI Scraper] Dispatching single Drag & Drop to inputEl…');
-    ['dragenter', 'dragover', 'drop'].forEach(type => {
-      inputEl.dispatchEvent(new DragEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        dataTransfer: dt
-      }));
-    });
-
-    await new Promise(r => setTimeout(r, 250));
-    const plate = getGoogleAIInputPlate(inputEl) || document;
-    if (plate.querySelector('img[src^="data:image/"], img[src^="blob:"]')) {
-      console.log('[AI Scraper] Format 1 (Drag & Drop) succeeded with 1 image ✓');
-      return true;
-    }
-
-    // Format 2: Synthetic Paste fallback
-    console.log('[AI Scraper] Drag & Drop did not attach yet. Trying Format 2: ClipboardEvent Paste…');
+    // --- Priority 1: Programmatic ClipboardEvent ('paste') directly on inputEl (wait up to 2s) ---
+    console.log('[AI Scraper] Priority 1: Dispatching ClipboardEvent paste directly to inputEl…');
     try {
       const pasteEvt = new ClipboardEvent('paste', {
         bubbles: true,
@@ -138,10 +129,68 @@
         clipboardData: dt
       });
       inputEl.dispatchEvent(pasteEvt);
-    } catch (_) {}
+    } catch (e) {
+      console.warn('[AI Scraper] Priority 1 (Paste) error:', e);
+    }
 
-    await new Promise(r => setTimeout(r, 250));
-    return !!plate.querySelector('img[src^="data:image/"], img[src^="blob:"]');
+    if (await waitForPreview(inputEl, 2000)) {
+      console.log('[AI Scraper] Priority 1 (Clipboard Paste) succeeded ✓ (settled within 2s)');
+      return true;
+    }
+
+    // --- Priority 2: Synthetic Drag & Drop onto inputEl & plate (wait up to 2s) ---
+    console.log('[AI Scraper] Priority 1 did not attach within 2s. Trying Priority 2 (Drag & Drop)…');
+    try {
+      const plate = getGoogleAIInputPlate(inputEl) || inputEl.parentElement;
+      const targets = [inputEl, plate].filter(Boolean);
+      ['dragenter', 'dragover', 'drop'].forEach(type => {
+        const ev = new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          dataTransfer: dt
+        });
+        targets.forEach(t => t.dispatchEvent(ev));
+      });
+    } catch (e) {
+      console.warn('[AI Scraper] Priority 2 (Drag & Drop) error:', e);
+    }
+
+    if (await waitForPreview(inputEl, 2000)) {
+      console.log('[AI Scraper] Priority 2 (Drag & Drop) succeeded ✓ (settled within 2s)');
+      return true;
+    }
+
+    // --- Priority 3: Native <input type="file"> / Add Button Fallback of last resort (wait up to 2s) ---
+    console.log('[AI Scraper] Priority 2 did not attach within 2s. Trying Priority 3 (File Input Fallback)…');
+    let fileInput = document.querySelector('input[type="file"]');
+    if (!fileInput) {
+      const addBtn = document.querySelector('button[aria-label*="Add" i], button[aria-label*="Upload" i], button[aria-label*="Tools" i], [data-xid*="add"], [data-xid*="upload"], div[data-xid*="input-plate"] button');
+      if (addBtn) {
+        console.log('[AI Scraper] Priority 3: Clicking Add/Tools button to reveal file input…');
+        addBtn.click();
+        await new Promise(r => setTimeout(r, 400));
+        fileInput = document.querySelector('input[type="file"]');
+      }
+    }
+
+    if (fileInput) {
+      try {
+        fileInput.files = dt.files;
+        fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+        fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+        console.log('[AI Scraper] Priority 3: Dispatched file to input[type="file"] ✓');
+      } catch (err) {
+        console.warn('[AI Scraper] Priority 3 fileInput injection error:', err);
+      }
+    }
+
+    if (await waitForPreview(inputEl, 2000)) {
+      console.log('[AI Scraper] Priority 3 (File Input Fallback) succeeded ✓');
+      return true;
+    }
+
+    return false;
   }
 
   let submitInterval = null;
@@ -247,7 +296,10 @@
     chrome.storage.local.remove(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed', 'newtcbt_google_ai_timestamp']);
   }
 
-  function startGoogleAISubmission(query, imageBase64, isEmbedMode) {
+  function startGoogleAISubmission(query, imageBase64, isEmbedMode, isAutoRetry = false) {
+    if (!isAutoRetry) {
+      autoRetryCount = 0;
+    }
     if (submitInterval) {
       clearInterval(submitInterval);
       submitInterval = null;
@@ -258,7 +310,7 @@
     imagePasted = false;
     imageUploadInProgress = false;
 
-    console.log('[AI Scraper] Starting Google AI submission. Image:', !!imageBase64, 'Embed:', isEmbedMode);
+    console.log('[AI Scraper] Starting Google AI submission. Image:', !!imageBase64, 'Embed:', isEmbedMode, 'AutoRetry:', isAutoRetry);
 
     submitInterval = setInterval(async () => {
       if (querySubmitted) {
@@ -282,39 +334,8 @@
 
         const file = (await dataURLtoFileAsync(imageBase64, 'question.png')) || dataURLtoFile(imageBase64, 'question.png');
         if (file) {
-          const dt = new DataTransfer();
-          dt.items.add(file);
-
-          // Priority 1: Native <input type="file"> (Exact same as Gemini, verified working in Firefox & Chrome)
-          let fileInput = document.querySelector('input[type="file"]');
-          if (!fileInput) {
-            const addBtn = document.querySelector('button[aria-label*="Add" i], button[aria-label*="Upload" i], button[aria-label*="Tools" i], [data-xid*="add"], [data-xid*="upload"], div[data-xid*="input-plate"] button');
-            if (addBtn) {
-              addBtn.click();
-              await new Promise(r => setTimeout(r, 100));
-              fileInput = document.querySelector('input[type="file"]');
-            }
-          }
-
-          if (fileInput) {
-            console.log('[AI Scraper] Priority 1: Injected file into Google AI input[type="file"] ✓');
-            fileInput.files = dt.files;
-            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-            fileInput.dispatchEvent(new Event('input', { bubbles: true }));
-          } else {
-            console.log('[AI Scraper] Fallback: Dispatching Drag & Drop to inputEl and plate…');
-            const plate = inputEl.closest('div[data-xid*="input-plate"], form, .WvcQpb, .VdsLEf, .UAbVe') || inputEl.parentElement;
-            ['dragenter', 'dragover', 'drop'].forEach(type => {
-              const ev = new DragEvent(type, {
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                dataTransfer: dt
-              });
-              inputEl.dispatchEvent(ev);
-              if (plate && plate !== inputEl) plate.dispatchEvent(ev);
-            });
-          }
+          // Attach image: Priority 1 (Paste) -> Priority 2 (Drag & Drop) -> Priority 3 (File Input Fallback)
+          await attachImageToGoogleAI(inputEl, file);
 
           // 2. Insert prompt text
           insertPromptText(inputEl, query);
@@ -326,21 +347,39 @@
           const uploadTimer = setInterval(() => {
             waited += 100;
             const currentPlate = inputEl.closest('div[data-xid*="input-plate"], form, .WvcQpb, .VdsLEf, .UAbVe') || document;
-            const thumbImg = currentPlate.querySelector('img[src^="data:image/"], img[src^="blob:"]');
-            const sendBtn = currentPlate.querySelector('button[data-xid="input-plate-send-button"], button[aria-label="Send"]');
+            const thumbImg = currentPlate.querySelector('img[src^="data:image/"], img[src^="blob:"]') ||
+                             currentPlate.querySelector('.AoJF8e, button[aria-label*=".png" i], button[aria-label*="question" i]');
+            const sendBtn = currentPlate.querySelector('button[data-xid="input-plate-send-button"], button[aria-label="Send"], button.OEueve');
             const isSendEnabled = sendBtn && !sendBtn.disabled && sendBtn.getAttribute('aria-disabled') !== 'true';
 
-            if (thumbImg && isSendEnabled && waited >= 400) {
+            if ((thumbImg || hasGoogleAIImagePreview(inputEl)) && isSendEnabled && waited >= 350) {
               clearInterval(uploadTimer);
               console.log('[AI Scraper] 4. Image thumbnail detected and Send button ready! Clicking Send ✓ (waited:', waited, 'ms)');
               sendBtn.click();
               querySubmitted = true;
               imageUploadInProgress = false;
               chrome.storage.local.remove(['newtcbt_google_ai_query', 'newtcbt_google_ai_image', 'newtcbt_google_ai_embed', 'newtcbt_google_ai_timestamp']);
-            } else if (waited > 15000) {
+            } else if (waited > 7000) {
               clearInterval(uploadTimer);
-              console.error('[AI Scraper] Timeout waiting for image upload. ABORTING SEND to avoid sending text without image.');
-              imageUploadInProgress = false;
+              if (autoRetryCount < 1) {
+                autoRetryCount++;
+                console.warn('[AI Scraper] Image upload timed out after 7s. Auto-retrying submission once (attempt 1 of 1)…');
+                imageUploadInProgress = false;
+                imagePasted = false;
+                querySubmitted = false;
+                submissionStarted = false;
+                startGoogleAISubmission(query, imageBase64, isEmbedMode, true);
+              } else {
+                console.error('[AI Scraper] Timeout waiting for image upload after retry. ABORTING SEND to avoid sending text without image.');
+                imageUploadInProgress = false;
+                try {
+                  chrome.runtime.sendMessage({
+                    type: 'AI_SOLUTION_EXTRACTED',
+                    success: false,
+                    error: 'Image upload timed out. Click Retry in companion to try again.'
+                  });
+                } catch (_) {}
+              }
             }
           }, 100);
           return;
@@ -592,6 +631,7 @@
         submissionStarted = false;
         imagePasted = false;
         imageUploadInProgress = false;
+        autoRetryCount = 0;
         startGoogleAISubmission(q, img, isEmbed);
         sendResponse({ success: true });
       });
@@ -617,6 +657,7 @@
         submissionStarted = false;
         imagePasted = false;
         imageUploadInProgress = false;
+        autoRetryCount = 0;
         startGoogleAISubmission(q, img, isEmbed);
       });
     }

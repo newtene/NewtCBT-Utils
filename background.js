@@ -277,14 +277,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     const isExplicitSidepanel = request.companionMode === 'sidepanel' || request.mode === 'sidepanel' || request.type === 'OPEN_SIDEPANEL';
 
+    // Fast-path: When explicit sidepanel open is requested, trigger chrome.sidePanel.open immediately
+    // on the current user gesture turn so Chrome's transient activation does not expire.
+    if (isExplicitSidepanel && hasChromeSidePanel()) {
+      chrome.storage.local.set({ newtcbt_companion_is_sidepanel: true });
+      const callerWindowId = sender.tab?.windowId;
+      const callerTabId = sender.tab?.id;
+      const openOptions = callerWindowId ? { windowId: callerWindowId } : (callerTabId ? { tabId: callerTabId } : {});
+      if (callerWindowId || callerTabId) {
+        chrome.sidePanel.open(openOptions).then(() => {
+          sendResponse({ success: true, sidePanel: true });
+        }).catch((err) => {
+          console.warn('[NewtCBT] chrome.sidePanel.open error in fast-path FOCUS_COMPANION_TAB:', err);
+          sendResponse({ success: false, error: err?.message || String(err) });
+        });
+      } else {
+        chrome.windows.getCurrent((win) => {
+          const wId = win?.id;
+          chrome.sidePanel.open(wId ? { windowId: wId } : {}).then(() => {
+            sendResponse({ success: true, sidePanel: true });
+          }).catch((err) => {
+            console.warn('[NewtCBT] chrome.sidePanel.open error in FOCUS_COMPANION_TAB fallback:', err);
+            sendResponse({ success: false, error: err?.message || String(err) });
+          });
+        });
+      }
+      return true;
+    }
+
     chrome.storage.local.get(['newtcbt_companion_is_sidepanel', 'newtcbt_active_companion_tab_id', 'newtcbt_sidepanel_url'], (res) => {
       const isSidepanelMode = isExplicitSidepanel || !!res?.newtcbt_companion_is_sidepanel;
 
       if (isSidepanelMode && hasChromeSidePanel()) {
         chrome.storage.local.set({ newtcbt_companion_is_sidepanel: true });
         const callerWindowId = sender.tab?.windowId;
-        const openOptions = callerWindowId ? { windowId: callerWindowId } : {};
-        if (callerWindowId) {
+        const callerTabId = sender.tab?.id;
+        const openOptions = callerWindowId ? { windowId: callerWindowId } : (callerTabId ? { tabId: callerTabId } : {});
+        if (callerWindowId || callerTabId) {
           chrome.sidePanel.open(openOptions).then(() => {
             sendResponse({ success: true, sidePanel: true });
           }).catch((err) => {
@@ -633,6 +662,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const isChromeSidePanel = hasChromeSidePanel();
     const isSidePanelAvailable = isChromeSidePanel;
     const isPinned = companionMode === 'pinned' || (!isSidePanelAvailable && !!request.isPinned);
+    const sessionMode = request.actionType || request.sessionMode || 'solution';
 
     if (sender.tab?.id) {
       activeNewtCbtTabId = sender.tab.id;
@@ -650,12 +680,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       newtcbt_gemini_image: image,
       newtcbt_gemini_embed: !isPinned,
       newtcbt_gemini_grounding: false,
-      newtcbt_gemini_timestamp: timestamp
+      newtcbt_gemini_timestamp: timestamp,
+      newtcbt_sidepanel_session_mode: sessionMode
     } : {
       newtcbt_google_ai_query: query,
       newtcbt_google_ai_image: image,
       newtcbt_google_ai_embed: !isPinned,
-      newtcbt_google_ai_timestamp: timestamp
+      newtcbt_google_ai_timestamp: timestamp,
+      newtcbt_sidepanel_session_mode: sessionMode
     };
 
     chrome.storage.local.set(storagePayload, () => {
@@ -666,17 +698,22 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.storage.local.set({
           newtcbt_sidepanel_url: targetUrl,
           newtcbt_companion_is_sidepanel: true,
-          newtcbt_sidepanel_session_mode: 'solution'
+          newtcbt_sidepanel_session_mode: sessionMode
         });
 
         if (activeSidepanelPort) {
           try {
-            activeSidepanelPort.postMessage({ type: 'UPDATE_SIDEPANEL_URL', url: targetUrl, mode: 'solution' });
+            activeSidepanelPort.postMessage({ type: 'UPDATE_SIDEPANEL_URL', url: targetUrl, mode: sessionMode });
+            activeSidepanelPort.postMessage({ type: 'SET_SIDEPANEL_MODE', mode: sessionMode });
           } catch (_) {}
           chrome.runtime.sendMessage({
             type: 'UPDATE_SIDEPANEL_URL',
             url: targetUrl,
-            mode: 'solution'
+            mode: sessionMode
+          }).catch(() => {});
+          chrome.runtime.sendMessage({
+            type: 'SET_SIDEPANEL_MODE',
+            mode: sessionMode
           }).catch(() => {});
           sendResponse({ success: true, url: targetUrl, sidePanel: true, reused: true });
           return;
@@ -685,7 +722,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.runtime.sendMessage({
           type: 'UPDATE_SIDEPANEL_URL',
           url: targetUrl,
-          mode: 'solution'
+          mode: sessionMode
+        }).catch(() => {});
+        chrome.runtime.sendMessage({
+          type: 'SET_SIDEPANEL_MODE',
+          mode: sessionMode
         }).catch(() => {});
 
         if (isChromeSidePanel) {
@@ -717,6 +758,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           if (tab && tab.windowId) {
             chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
           }
+          chrome.tabs.sendMessage(tabId, { type: 'SET_SIDEPANEL_MODE', mode: sessionMode }).catch(() => {});
           sendResponse({ success: true, url: targetUrl, tabId, isPinned: true, reused });
         });
       };
@@ -806,7 +848,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.type === 'AI_SOLUTION_EXTRACTED') {
-    if (request.text) {
+    if (request.success === false) {
+      broadcastToNewtCBTTabs({
+        type: 'NEWTCBT_EXTRACTED_SOLN_RESULT',
+        success: false,
+        error: request.error || 'Failed to extract AI solution.'
+      });
+    } else if (request.text) {
       broadcastToNewtCBTTabs({
         type: 'NEWTCBT_EXTRACTED_SOLN_RESULT',
         success: true,

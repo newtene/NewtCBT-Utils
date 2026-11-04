@@ -526,10 +526,10 @@
     const len = payload.length;
     if (stage === 'loki') {
       if (len < 120) return false;
-      const hasStructure = /^#{1,4}\s+[A-Za-z]/m.test(payload) || 
-                           /\[(?:OPTIONS|CH:|DIAGRAM)/i.test(payload) ||
-                           /^[1-9]\d{0,2}[\.\)]\s+[\s\S]*?(?:\([A-D1-4]\)|\[OPTIONS\]|\$)/m.test(payload);
-      const stripped = payload.replace(/\s+/g, ' ').trim();
+      const hasStructure = /(?:^|[\n\r↵⏎])\s*#{1,4}\s+[A-Za-z]/m.test(payload) || 
+                           /\[(?:OPTIONS|CH:|DIAGRAM|DIFF:)/i.test(payload) ||
+                           /(?:^|[\n\r↵⏎])\s*[1-9]\d{0,2}[\.\)]\s+[\s\S]*?(?:\([A-D1-4]\)|\[OPTIONS\]|\$)/m.test(payload);
+      const stripped = payload.replace(/[↵⏎\s]+/g, ' ').trim();
       const isPureAnsKey = /^(?:(?:Q\.?\s*\d+|\d{1,3}[\.\:\)])\s*[\(\[]?[A-D1-4][\)\]]?\s*)+$/im.test(stripped) ||
                            (!payload.includes('OPTIONS') && !payload.includes('$') && !payload.includes('#') && !/(?:\([A-D]\).*?\([A-D]\))/s.test(payload) && !/(?:[A-D]\).*?[A-D]\))/s.test(payload));
       return hasStructure && !isPureAnsKey;
@@ -540,7 +540,11 @@
     }
     if (stage === 'sylvie' || stage === 'ans' || stage === 'key') {
       if (len < 20) return false;
-      return /^(?:(?:Q\.?\s*\d+|\d{1,3}[\.\:\)])\s*[\(\[]?[A-D1-4][\)\]]?)/im.test(payload) || /"answers"/i.test(payload) || /^\s*[\{\[]/m.test(payload);
+      return /(?:^|[\n\r↵⏎])\s*(?:(?:Q\.?\s*\d+|\d{1,3}[\.\:\)])\s*[\(\[]?[A-D1-4][\)\]]?)/im.test(payload) || 
+             /"answers"/i.test(payload) || 
+             /^\s*[\{\[]/m.test(payload) ||
+             /===QUESTION/i.test(payload) ||
+             /\[ANS\]/i.test(payload);
     }
     return len >= 20;
   }
@@ -874,18 +878,23 @@
 
     // 3. Fallback if model output raw text without code fences:
     // ONLY match if it contains verified exam structure (never conversational thinking)
-    const secIdx = text.search(/^#{1,3}\s+[A-Za-z]/m);
+    const sylvieDelimIdx = text.search(/(?:^|[\n\r↵⏎])\s*===QUESTION\s*\d*===/m);
+    if (sylvieDelimIdx >= 0) {
+      return text.slice(sylvieDelimIdx).trim();
+    }
+
+    const secIdx = text.search(/(?:^|[\n\r↵⏎])\s*#{1,3}\s+[A-Za-z]/m);
     if (secIdx >= 0) {
       return text.slice(secIdx).trim();
     }
 
-    const qWithOptsIdx = text.search(/^[1-9]\d{0,2}[\.\)]\s+[\s\S]*?(?:\n\[OPTIONS\]|\n[A-D]\)|\n\([A-D]\)|\[CH:|\[DIAGRAM)/im);
+    const qWithOptsIdx = text.search(/(?:^|[\n\r↵⏎])\s*[1-9]\d{0,2}[\.\)]\s+[\s\S]*?(?:[\n\r↵⏎]\s*\[OPTIONS\]|[\n\r↵⏎]\s*[A-D]\)|[\n\r↵⏎]\s*\([A-D]\)|\[CH:|\[DIAGRAM|\[DIFF:)/im);
     if (qWithOptsIdx >= 0) {
       return text.slice(qWithOptsIdx).trim();
     }
 
     // Answer key fallback: e.g. "1. A" or "1: (B)" or "Q1. A"
-    const ansIdx = text.search(/(?:^|\n)(?:Q\.?\s*\d+|\d{1,3}[\.\:\)])\s*[\(\[]?([A-D1-4])[\)\]]?(?:\s*$|\s+(?=[^a-z]|$))/im);
+    const ansIdx = text.search(/(?:^|[\n\r↵⏎])\s*(?:Q\.?\s*\d+|\d{1,3}[\.\:\)])\s*[\(\[]?([A-D1-4])[\)\]]?(?:\s*$|\s+(?=[^a-z]|$))/im);
     if (ansIdx >= 0) {
       return text.slice(ansIdx).trim();
     }

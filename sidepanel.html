@@ -103,6 +103,11 @@
       width: 28px;
       padding: 0;
     }
+    #btn-close:hover {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border-color: rgba(239, 68, 68, 0.3);
+    }
     .btn-success {
       background: rgba(16, 185, 129, 0.15) !important;
       color: #34d399 !important;
@@ -236,11 +241,10 @@
         </svg>
         <span id="txt-add-soln">Add solution to NewtCBT</span>
       </button>
-      <button class="btn btn-icon" id="btn-open-tab" title="Open in new browser tab">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
-          <polyline points="15 3 21 3 21 9"></polyline>
-          <line x1="10" y1="14" x2="21" y2="3"></line>
+      <button class="btn btn-icon" id="btn-close" title="Close sidebar">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
         </svg>
       </button>
     </div>

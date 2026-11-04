@@ -10,6 +10,11 @@
     return;
   }
 
+  // If explicitly closed in this session/tab, do not re-inject
+  if (sessionStorage.getItem('newtcbt_companion_active') === 'false') {
+    return;
+  }
+
   // Only activate if the tab was launched by NewtCBT (contains &_s= session parameter or #newtcbt hash)
   const isNewtSession = window.location.search.includes('_s=') || 
                         window.location.hash.includes('newtcbt') || 
@@ -551,7 +556,7 @@
           <polyline points="2 17 12 22 22 17"/>
           <polyline points="2 12 12 17 22 12"/>
         </svg>
-        <span class="brand-title">${isAIStudio ? 'NewtCBT' : 'NewtCBT AI Solution'}</span>
+        <span class="brand-title" id="companion-brand-title">${isAIStudio ? 'NewtCBT' : 'NewtCBT AI Solution'}</span>
       </div>
       <div class="header-right">
         ${isAIStudio ? `<span class="header-mode-label">Test Generation</span>` : ''}
@@ -781,6 +786,8 @@
     });
   }
 
+
+
   // Retry Step with Selected Model (AI Studio)
   if (btnRetry) {
     btnRetry.addEventListener('click', () => {
@@ -957,6 +964,41 @@
 
       if (msg.type === 'NEWTCBT_AI_STUDIO_MODEL_UPDATED' && msg.model) {
         updateModelSelection(msg.model);
+      }
+
+      if (msg.type === 'SET_SIDEPANEL_MODE' && msg.mode) {
+        updateCompanionSessionMode(msg.mode);
+      }
+    });
+  }
+
+  function updateCompanionSessionMode(mode) {
+    if (isAIStudio) return;
+    const brandTitleEl = shadow.getElementById('companion-brand-title');
+    const btnExtract = shadow.getElementById('btn-extract-soln');
+    const btnRetry = shadow.getElementById('btn-retry-soln');
+    if (mode === 'hint') {
+      if (brandTitleEl) brandTitleEl.textContent = 'NewtCBT AI Hint';
+      if (btnExtract) btnExtract.style.display = 'none';
+      if (btnRetry) btnRetry.style.display = '';
+    } else {
+      if (brandTitleEl) brandTitleEl.textContent = 'NewtCBT AI Solution';
+      if (btnExtract) btnExtract.style.display = '';
+      if (btnRetry) btnRetry.style.display = '';
+    }
+  }
+
+  // Check initial session mode from storage
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.get(['newtcbt_sidepanel_session_mode'], (res) => {
+      if (res?.newtcbt_sidepanel_session_mode) {
+        updateCompanionSessionMode(res.newtcbt_sidepanel_session_mode);
+      }
+    });
+
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.newtcbt_sidepanel_session_mode) {
+        updateCompanionSessionMode(changes.newtcbt_sidepanel_session_mode.newValue);
       }
     });
   }

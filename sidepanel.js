@@ -11,24 +11,35 @@
   const btnRetry = document.getElementById('btn-retry');
   const btnAddSolution = document.getElementById('btn-add-solution');
   const txtAddSoln = document.getElementById('txt-add-soln');
-  const btnOpenTab = document.getElementById('btn-open-tab');
+  const btnClose = document.getElementById('btn-close');
 
   let currentUrl = '';
   let hideOverlayTimeout = null;
   let isExtracting = false;
-  let sessionMode = 'generate'; // 'solution' | 'generate'
+  let sessionMode = 'generate'; // 'solution' | 'hint' | 'generate'
 
   function updateTopbarVisibility(mode) {
     if (mode) sessionMode = mode;
     const isAiStudio = (currentUrl && currentUrl.includes('aistudio.google.com')) || 
                        (frame && frame.src && frame.src.includes('aistudio.google.com'));
     const topbar = document.getElementById('topbar');
-    if (topbar) {
-      if (sessionMode === 'solution' && !isAiStudio) {
-        topbar.classList.remove('hidden');
-      } else {
-        topbar.classList.add('hidden');
-      }
+    if (!topbar) return;
+
+    if (sessionMode === 'generate' || isAiStudio) {
+      topbar.classList.add('hidden');
+      return;
+    }
+
+    if (sessionMode === 'hint') {
+      topbar.classList.remove('hidden');
+      if (btnRetry) btnRetry.style.display = '';
+      if (btnAddSolution) btnAddSolution.style.display = 'none';
+    } else if (sessionMode === 'solution') {
+      topbar.classList.remove('hidden');
+      if (btnRetry) btnRetry.style.display = '';
+      if (btnAddSolution) btnAddSolution.style.display = '';
+    } else {
+      topbar.classList.add('hidden');
     }
   }
 
@@ -73,7 +84,9 @@
     if (url.includes('aistudio.google.com')) {
       effectiveMode = 'generate';
     } else if (!effectiveMode) {
-      if (url.includes('gemini.google.com') || (url.includes('google.com') && url.includes('/search'))) {
+      if (sessionMode === 'hint') {
+        effectiveMode = 'hint';
+      } else if (url.includes('gemini.google.com') || (url.includes('google.com') && url.includes('/search'))) {
         effectiveMode = 'solution';
       } else {
         effectiveMode = 'generate';
@@ -222,14 +235,20 @@
     });
   }
 
-  // 3. Open in external tab
-  if (btnOpenTab) {
-    btnOpenTab.addEventListener('click', () => {
-      const urlToOpen = currentUrl || frame?.src || 'https://gemini.google.com/app#newtcbt';
-      if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.create) {
-        chrome.tabs.create({ url: urlToOpen, active: true });
-      } else {
-        window.open(urlToOpen, '_blank');
+  // 3. Close sidebar
+  if (btnClose) {
+    btnClose.addEventListener('click', () => {
+      showIdleState();
+      try {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          chrome.storage.local.set({
+            newtcbt_sidepanel_url: '',
+            newtcbt_sidepanel_session_mode: 'generate'
+          });
+        }
+        window.close();
+      } catch (err) {
+        console.warn('[NewtCBT] Could not close sidepanel window:', err);
       }
     });
   }
@@ -262,7 +281,7 @@
       port.onMessage.addListener((msg) => {
         if (!msg) return;
         if (msg.type === 'UPDATE_SIDEPANEL_URL' && msg.url) {
-          const mode = msg.url.includes('aistudio.google.com') ? 'generate' : (msg.mode || 'solution');
+          const mode = msg.url.includes('aistudio.google.com') ? 'generate' : (msg.mode || sessionMode || 'solution');
           loadUrl(msg.url, mode);
         }
         if (msg.type === 'SET_SIDEPANEL_MODE' && msg.mode) {
@@ -329,7 +348,7 @@
     chrome.runtime.onMessage.addListener((msg) => {
       if (!msg) return;
       if (msg.type === 'UPDATE_SIDEPANEL_URL' && msg.url) {
-        const mode = msg.url.includes('aistudio.google.com') ? 'generate' : (msg.mode || 'solution');
+        const mode = msg.url.includes('aistudio.google.com') ? 'generate' : (msg.mode || sessionMode || 'solution');
         loadUrl(msg.url, mode);
       }
       if (msg.type === 'SET_SIDEPANEL_MODE' && msg.mode) {

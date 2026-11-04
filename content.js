@@ -172,7 +172,9 @@ window.addEventListener('message', function(event) {
         image: event.data.image || null,
         source: event.data.source || 'gemini',
         isPinned: !!event.data.isPinned,
-        companionMode: event.data.companionMode || (event.data.isPinned ? 'pinned' : 'sidepanel')
+        companionMode: event.data.companionMode || (event.data.isPinned ? 'pinned' : 'sidepanel'),
+        actionType: event.data.actionType || event.data.sessionMode || 'solution',
+        sessionMode: event.data.sessionMode || event.data.actionType || 'solution'
       },
       (response) => {
         window.postMessage({
