@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/4ee93cd6-3fc3-4882-b946-897640021ce4
 ---
 
 ## Installation Guide (Mozilla Firefox)
-
+> **Note:** This extension is available on mozilla addons and can be easily added on firefox using [firefox addons](https://addons.mozilla.org/en-US/firefox/addon/newtcbt-utils/).
 Follow these simple steps to load the extension manually:
 
 1. **Open Debugging Page**: Type `about:debugging` into your Firefox address bar and hit Enter.
