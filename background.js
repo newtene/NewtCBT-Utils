@@ -396,7 +396,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       activeNewtCbtTabId = sender.tab.id;
       chrome.storage.local.set({ newtcbt_active_newtcbt_tab_id: activeNewtCbtTabId });
     }
-    const model = request.model || 'gemini-3.8-flash';
+    const model = request.model || 'gemini-4-hydrogen';
     const forceNewChat = !!request.forceNewChat;
     const companionMode = request.companionMode || request.mode || 'pinned';
     const useDebugger = !!request.useDebugger;
@@ -876,8 +876,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return false;
   }
 
+  if (request.type === 'SYNC_AI_STUDIO_MODELS') {
+    const models = Array.isArray(request.models) && request.models.length > 0 ? request.models : null;
+    const activeModel = request.activeModel || (models ? models[0].id : 'gemini-4-hydrogen');
+    const storageUpdate = {
+      newtcbt_ai_studio_model: activeModel,
+      newtcbt_alt_model: activeModel
+    };
+    if (models) {
+      storageUpdate.newtcbt_models_list = models;
+    }
+    chrome.storage.local.set(storageUpdate, () => {
+      broadcastToAIStudioFrames({
+        type: 'NEWTCBT_AI_STUDIO_MODELS_SYNCED',
+        models,
+        activeModel
+      });
+      if (sendResponse) sendResponse({ success: true });
+    });
+    return true;
+  }
+
   if (request.type === 'UPDATE_AI_STUDIO_MODEL') {
-    const model = request.model || 'gemini-3.8-flash';
+    const model = request.model || 'gemini-4-hydrogen';
     chrome.storage.local.set({
       newtcbt_alt_model: model,
       newtcbt_ai_studio_model: model
@@ -910,13 +931,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       newtcbt_alt_job_id: request.jobId || ('job_' + Date.now()),
       newtcbt_alt_timestamp: Date.now(),
       newtcbt_alt_is_retry: !!request.isRetry,
-      newtcbt_alt_model: request.model || 'gemini-3.8-flash',
+      newtcbt_alt_model: request.model || 'gemini-4-hydrogen',
       newtcbt_gem_stage: request.stage || 'text',
       newtcbt_gem_prompt: request.prompt || '',
       newtcbt_gem_job_id: request.jobId || ('job_' + Date.now()),
       newtcbt_gem_timestamp: Date.now(),
       newtcbt_gem_is_retry: !!request.isRetry,
-      newtcbt_gem_model: request.model || 'gemini-3.8-flash'
+      newtcbt_gem_model: request.model || 'gemini-4-hydrogen'
     };
 
     if (request.stage === 'loki' && request.file) {
@@ -1080,7 +1101,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // Retry active step in a brand new chat (in sidepanel iframe if in sidepanel mode, or new tab in fallback)
   if (request.type === 'RETRY_IN_NEW_TAB') {
-    const model = request.model || 'gemini-3.8-flash';
+    const model = request.model || 'gemini-4-hydrogen';
     const stage = request.stage || 'sylvie';
     const prompt = request.prompt || '';
     let file = request.file || null;

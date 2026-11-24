@@ -112,12 +112,15 @@
 
   if (btnLaunchAiStudio) {
     btnLaunchAiStudio.addEventListener('click', () => {
-      const studioUrl = 'https://aistudio.google.com/prompts/new_chat?model=gemini-3.8-flash#newtcbt_companion=1';
-      chrome.storage.local.set({
-        newtcbt_sidepanel_url: studioUrl,
-        newtcbt_sidepanel_session_mode: 'generate'
+      chrome.storage.local.get(['newtcbt_ai_studio_model', 'newtcbt_alt_model'], (res) => {
+        const model = res?.newtcbt_ai_studio_model || res?.newtcbt_alt_model || 'gemini-4-hydrogen';
+        const studioUrl = `https://aistudio.google.com/prompts/new_chat?model=${encodeURIComponent(model)}#newtcbt_companion=1`;
+        chrome.storage.local.set({
+          newtcbt_sidepanel_url: studioUrl,
+          newtcbt_sidepanel_session_mode: 'generate'
+        });
+        loadUrl(studioUrl, 'generate');
       });
-      loadUrl(studioUrl, 'generate');
     });
   }
 

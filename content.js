@@ -1,5 +1,14 @@
+function announceExtensionReady() {
+  let version;
+  try {
+    version = chrome.runtime.getManifest().version;
+  } catch {
+    return;
+  }
+  window.postMessage({ type: 'NEWTCBT_EXTENSION_READY', version }, window.location.origin);
+}
 
-window.postMessage({ type: 'NEWTCBT_EXTENSION_READY' }, window.location.origin);
+announceExtensionReady();
 
 function safeSendMessage(message, callback) {
   try {
@@ -37,7 +46,7 @@ window.addEventListener('message', function(event) {
   }
 
   if (event.data.type && event.data.type === 'PING_NEWTCBT_EXTENSION') {
-    window.postMessage({ type: 'NEWTCBT_EXTENSION_READY' }, window.location.origin);
+    announceExtensionReady();
   }
 
   if (event.data.type && event.data.type === 'NEWTCBT_YOUTUBE_SEARCH') {
@@ -190,11 +199,19 @@ window.addEventListener('message', function(event) {
     );
   }
 
+  if (event.data.type && event.data.type === 'NEWTCBT_SYNC_MODELS') {
+    safeSendMessage({
+      type: 'SYNC_AI_STUDIO_MODELS',
+      models: event.data.models,
+      activeModel: event.data.activeModel
+    });
+  }
+
   if (event.data.type && event.data.type === 'NEWTCBT_LAUNCH_PINNED_STAGE') {
     safeSendMessage(
       {
         type: 'LAUNCH_PINNED_STAGE',
-        model: event.data.model || 'gemini-3.8-flash',
+        model: event.data.model || 'gemini-4-hydrogen',
         active: event.data.active !== false,
         forceNewChat: !!event.data.forceNewChat,
         companionMode: event.data.companionMode || event.data.mode || 'pinned',
@@ -268,7 +285,7 @@ window.addEventListener('message', function(event) {
         prompt: event.data.prompt || '',
         jobId: event.data.jobId || ('job_' + Date.now()),
         isRetry: !!event.data.isRetry,
-        model: event.data.model || 'gemini-3.8-flash'
+        model: event.data.model || 'gemini-4-hydrogen'
       },
       (response) => {
         if (response && response.error) {

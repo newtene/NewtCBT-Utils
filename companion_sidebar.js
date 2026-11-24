@@ -40,17 +40,14 @@
     return;
   }
 
-  const MODEL_OPTIONS = [
+  let MODEL_OPTIONS = [
+    { id: 'gemini-4-hydrogen', label: '4 Hydrogen' },
     { id: 'gemini-3.8-flash', label: '3.8 Flash' },
-    { id: 'gemini-3.7-flash', label: '3.7 Flash' },
-    { id: 'gemini-3.6-flash', label: '3.6 Flash' },
-    { id: 'gemini-3.5-flash', label: '3.5 Flash' },
-    { id: 'gemini-3.1-pro-preview', label: '3.1 Pro Preview' },
-    { id: 'gemini-3-flash-preview', label: '3 Flash Preview' }
+    { id: 'gemini-3.6-flash', label: '3.6 Flash' }
   ];
 
   const urlParams = new URLSearchParams(window.location.search);
-  let activeModel = urlParams.get('model') || 'gemini-3.8-flash';
+  let activeModel = urlParams.get('model') || 'gemini-4-hydrogen';
   let currentStage = 'sylvie';
 
   const logoUrl = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getURL)
@@ -758,14 +755,31 @@
     renderDropdownOptions();
   }
 
-  // Load saved default model
+  // Load dynamic models list and saved default model from storage
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-    chrome.storage.local.get(['newtcbt_alt_model', 'newtcbt_ai_studio_model'], (res) => {
+    chrome.storage.local.get(['newtcbt_models_list', 'newtcbt_alt_model', 'newtcbt_ai_studio_model'], (res) => {
+      if (Array.isArray(res.newtcbt_models_list) && res.newtcbt_models_list.length > 0) {
+        MODEL_OPTIONS = res.newtcbt_models_list;
+      }
       const saved = res.newtcbt_alt_model || res.newtcbt_ai_studio_model || activeModel;
       if (saved) {
         updateModelSelection(saved);
       }
     });
+
+    // Listen for live model sync broadcasts from NewtCBT
+    if (chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener((msg) => {
+        if (msg && msg.type === 'NEWTCBT_AI_STUDIO_MODELS_SYNCED' && Array.isArray(msg.models) && msg.models.length > 0) {
+          MODEL_OPTIONS = msg.models;
+          if (msg.activeModel) {
+            updateModelSelection(msg.activeModel);
+          } else {
+            renderDropdownOptions();
+          }
+        }
+      });
+    }
   } else {
     updateModelSelection(activeModel);
   }
